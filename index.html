@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
+  <title>DEFENDER — 1981 Arcade Classic</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="game-wrapper">
+    <header id="hud">
+      <div class="hud-block">
+        <div class="label">SCORE</div>
+        <div id="score">00</div>
+      </div>
+      <div class="hud-block">
+        <div class="label">HIGH</div>
+        <div id="high-score">00</div>
+      </div>
+      <div class="hud-block">
+        <div class="label">WAVE</div>
+        <div id="wave">1</div>
+      </div>
+      <div class="hud-block">
+        <div class="label">BOMBS</div>
+        <div id="bombs">3</div>
+      </div>
+    </header>
+
+    <div id="canvas-wrap">
+      <canvas id="game" width="800" height="600"></canvas>
+      <div id="overlay">
+        <div id="overlay-title">DEFENDER</div>
+        <div id="overlay-sub">INSERT COIN</div>
+        <div id="overlay-hint">PRESS SPACE OR TAP TO START</div>
+        <div id="overlay-controls">
+          ARROWS / WASD — CLIMB / DIVE / REVERSE<br />
+          SPACE / FIRE — LASER · B / BOMB — SMART BOMB<br />
+          SHIFT / THRUST — ENGINES · H — HYPERSPACE<br />
+          M — MUTE
+        </div>
+      </div>
+    </div>
+
+    <footer id="footer">
+      <div id="lives"></div>
+      <div id="humans-left"></div>
+    </footer>
+
+    <div id="mobile-controls" aria-label="Touch controls">
+      <div class="mobile-col">
+        <button type="button" id="btn-up" class="mobile-btn" aria-label="Up">▲</button>
+        <button type="button" id="btn-down" class="mobile-btn" aria-label="Down">▼</button>
+      </div>
+      <div class="mobile-col mid">
+        <button type="button" id="btn-thrust" class="mobile-btn thrust" aria-label="Thrust">THR</button>
+        <button type="button" id="btn-reverse" class="mobile-btn" aria-label="Reverse">REV</button>
+      </div>
+      <div class="mobile-col">
+        <button type="button" id="btn-fire" class="mobile-btn fire" aria-label="Fire">FIRE</button>
+        <button type="button" id="btn-bomb" class="mobile-btn bomb" aria-label="Smart bomb">BOMB</button>
+      </div>
+      <div class="mobile-col">
+        <button type="button" id="btn-hyper" class="mobile-btn" aria-label="Hyperspace">HYP</button>
+        <button type="button" id="btn-pause" class="mobile-btn" aria-label="Pause">❚❚</button>
+        <button type="button" id="btn-mute" class="mobile-btn" aria-label="Mute">♪</button>
+      </div>
+    </div>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
