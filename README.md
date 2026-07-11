@@ -22,11 +22,12 @@ Fly a long, wrapping planet. **Protect humanoids** from **Landers**. If a Lander
 
 ## Williams-style systems
 
-- **Thrust / reverse flight** with inertia (not tank-style movement)
+- **Multi-color raster look** (not 1970s green monochrome): rainbow mountains, colored enemies, cyan lasers
+- **Thrust / reverse flight** with inertia
 - **Long horizontal laser** beams, rapid fire
 - **Smart bombs** clear all enemies *on screen*
 - **Hyperspace** (risky random teleport)
-- **Scanner** radar across the top of the playfield
+- **Scanner** radar with color-coded blips
 - **Catch falling humans**, then **fly low to set them down** (+500 catch, +500 land)
 - Enemy cast: Landers, Mutants, Bombers (mines), Pods → Swarmers, Baiters
 - Staggered lander materialization, baiters if you stall
