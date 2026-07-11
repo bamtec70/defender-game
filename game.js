@@ -6,7 +6,15 @@
   "use strict";
 
   const canvas = document.getElementById("game");
+  if (!canvas) {
+    console.error("Defender: #game canvas missing");
+    return;
+  }
   const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) {
+    console.error("Defender: 2D context unavailable");
+    return;
+  }
   // Near original aspect; scaled up for modern screens
   const VW = 896;
   const VH = 672;
@@ -269,16 +277,21 @@
   }
 
   function groundAt(wx) {
+    if (!terrain.length) return GROUND_Y - 40;
     wx = wrap(wx);
     const step = 12;
     const i = Math.floor(wx / step) % terrain.length;
     const j = (i + 1) % terrain.length;
+    const a = terrain[i];
+    const b = terrain[j];
+    if (!a || !b) return GROUND_Y - 40;
     const t = (wx % step) / step;
-    const h = terrain[i].h * (1 - t) + terrain[j].h * t;
+    const h = a.h * (1 - t) + b.h * t;
     return GROUND_Y - h;
   }
 
   function terrainColorAt(wx) {
+    if (!terrain.length) return C.green;
     wx = wrap(wx);
     const i = Math.floor(wx / 12) % terrain.length;
     return terrain[i] ? terrain[i].col : C.green;
@@ -488,11 +501,11 @@
     sfx("bomb");
     for (const e of enemies) {
       if (e.dead) continue;
-      const sx = screenX(e.x);
+      const sx = worldToScreen(e.x);
       if (sx > -30 && sx < VW + 30) killEnemy(e, true);
     }
     shots = shots.filter((m) => {
-      const sx = screenX(m.x);
+      const sx = worldToScreen(m.x);
       if (sx > -20 && sx < VW + 20) {
         burst(m.x, m.y, C.yellow, 5);
         return false;
@@ -638,11 +651,12 @@
   }
 
   // Camera: ship fixed on screen, look ahead in face direction
+  // (named worldToScreen — avoid clashing with window.screenX)
   function shipScreenX() {
     return ship && ship.alive ? (ship.face > 0 ? VW * 0.3 : VW * 0.7) : VW * 0.4;
   }
 
-  function screenX(wx) {
+  function worldToScreen(wx) {
     const origin = (ship ? ship.x : 0) - shipScreenX();
     let sx = wx - origin;
     while (sx < -WORLD * 0.5) sx += WORLD;
@@ -1206,7 +1220,7 @@
 
   function drawStars() {
     for (const s of stars) {
-      const x = screenX(s.x);
+      const x = worldToScreen(s.x);
       if (x < -2 || x > VW + 2) continue;
       fillRect(x, s.y, s.s, s.s, s.c);
     }
@@ -1223,6 +1237,7 @@
       ctx.globalAlpha = 1;
       return;
     }
+    if (!terrain.length) return;
 
     const origin = (ship ? ship.x : 0) - shipScreenX();
     const start = origin - 30;
@@ -1233,7 +1248,7 @@
     ctx.fillStyle = "#08040c";
     let first = true;
     for (let wx = start; wx < end; wx += 10) {
-      const x = screenX(wrap(wx));
+      const x = worldToScreen(wrap(wx));
       const y = groundAt(wx);
       if (first) {
         ctx.moveTo(x, VH);
@@ -1249,7 +1264,7 @@
     let prevX = null;
     let prevY = null;
     for (let wx = start; wx < end; wx += 8) {
-      const x = screenX(wrap(wx));
+      const x = worldToScreen(wrap(wx));
       const y = groundAt(wx);
       if (prevX != null) {
         ctx.strokeStyle = terrainColorAt(wx);
@@ -1276,7 +1291,7 @@
   function drawShip() {
     if (!ship || !ship.alive) return;
     if (ship.inv > 0 && ((ship.inv / 60) | 0) % 2 === 0) return;
-    const x = screenX(ship.x);
+    const x = worldToScreen(ship.x);
     const y = ship.y;
     const f = ship.face;
 
@@ -1343,7 +1358,7 @@
 
   function drawHuman(h) {
     if (h.state === "dead" || h.state === "gone") return;
-    const x = screenX(h.x);
+    const x = worldToScreen(h.x);
     if (x < -20 || x > VW + 20) return;
     const y = h.y | 0;
     // Yellow humanoids (classic)
@@ -1358,17 +1373,22 @@
 
   function drawEnemy(e) {
     if (e.dead) return;
-    const x = screenX(e.x);
+    const x = worldToScreen(e.x);
     if (x < -50 || x > VW + 50) return;
     const y = e.y + Math.sin(e.bob / 130) * 2;
     if (e.mat > 0 && ((e.mat / 40) | 0) % 2 === 0) ctx.globalAlpha = 0.45;
 
     if (e.type === "lander") {
       // Green body, red dome, yellow legs — multi-color lander
-      ctx.fillStyle = C.green;
+      // (use scale+arc instead of ellipse for wider browser support)
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(1, 0.45);
       ctx.beginPath();
-      ctx.ellipse(x, y, 14, 6, 0, 0, Math.PI * 2);
+      ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.fillStyle = C.green;
       ctx.fill();
+      ctx.restore();
       ctx.fillStyle = C.red;
       ctx.beginPath();
       ctx.arc(x, y - 5, 7, Math.PI, 0);
@@ -1442,10 +1462,14 @@
       fillRect(x - 2, y - 2, 4, 4, C.yellow);
     } else if (e.type === "baiter") {
       // Red baiter with yellow cockpit
-      ctx.fillStyle = C.red;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(1, 0.4);
       ctx.beginPath();
-      ctx.ellipse(x, y, 18, 7, 0, 0, Math.PI * 2);
+      ctx.arc(0, 0, 18, 0, Math.PI * 2);
+      ctx.fillStyle = C.red;
       ctx.fill();
+      ctx.restore();
       fillRect(x - 6, y - 3, 12, 6, C.yellow);
       fillRect(x - 20, y - 1, 6, 2, C.pink);
       fillRect(x + 14, y - 1, 6, 2, C.pink);
@@ -1456,7 +1480,7 @@
 
   function drawLasers() {
     for (const L of lasers) {
-      const x0 = screenX(L.x);
+      const x0 = worldToScreen(L.x);
       const a = clamp(L.life / 55, 0, 1);
       // Outer glow — cyan/white beam (not green monochrome)
       ctx.globalAlpha = 0.85 * a;
@@ -1480,7 +1504,7 @@
 
   function drawShots() {
     for (const m of shots) {
-      const x = screenX(m.x);
+      const x = worldToScreen(m.x);
       if (x < -12 || x > VW + 12) continue;
       if (m.mine) {
         // Yellow mine cross
@@ -1496,7 +1520,7 @@
 
   function drawParticles() {
     for (const p of particles) {
-      const x = screenX(p.x);
+      const x = worldToScreen(p.x);
       ctx.globalAlpha = clamp(p.life / 400, 0, 1);
       fillRect(x, p.y, p.size || 2, p.size || 2, p.color);
     }
@@ -1690,6 +1714,19 @@
         state = "play";
         hideOV();
       }
+    });
+  }
+
+  // Title-screen backdrop so terrain exists before first play
+  buildTerrain();
+  stars = [];
+  for (let i = 0; i < 80; i++) {
+    stars.push({
+      x: Math.random() * WORLD,
+      y: PLAY_TOP + 8 + Math.random() * (GROUND_Y - PLAY_TOP - 50),
+      b: 0.35 + Math.random() * 0.65,
+      c: chance(0.15) ? C.cyan : chance(0.1) ? C.yellow : C.white,
+      s: chance(0.2) ? 2 : 1,
     });
   }
 
