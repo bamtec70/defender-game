@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#000000" />
-  <title>DEFENDER — 1981 Arcade Classic</title>
+  <title>DEFENDER — Williams 1981 Style</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -34,23 +34,23 @@
     </header>
 
     <div id="canvas-wrap">
-      <canvas id="game" width="800" height="600"></canvas>
+      <canvas id="game" width="896" height="672"></canvas>
       <div id="overlay">
         <div id="overlay-title">DEFENDER</div>
         <div id="overlay-sub">INSERT COIN</div>
         <div id="overlay-hint">PRESS SPACE OR TAP TO START</div>
         <div id="overlay-controls">
-          ARROWS / WASD — CLIMB / DIVE / REVERSE<br />
-          SPACE / FIRE — LASER · B / BOMB — SMART BOMB<br />
-          SHIFT / THRUST — ENGINES · H — HYPERSPACE<br />
-          M — MUTE
+          ↑↓ / W S — CLIMB / DIVE<br />
+          ←→ / A D — FACE LEFT / RIGHT · SHIFT/Z — THRUST<br />
+          SPACE — LASER · B — SMART BOMB · H — HYPERSPACE<br />
+          CATCH FALLING HUMANS · FLY LOW TO LAND THEM · M MUTE
         </div>
       </div>
     </div>
 
     <footer id="footer">
-      <div id="lives"></div>
-      <div id="humans-left"></div>
+      <div id="lives">SHIPS</div>
+      <div id="humans-left">HUMANS</div>
     </footer>
 
     <div id="mobile-controls" aria-label="Touch controls">
@@ -60,7 +60,10 @@
       </div>
       <div class="mobile-col mid">
         <button type="button" id="btn-thrust" class="mobile-btn thrust" aria-label="Thrust">THR</button>
-        <button type="button" id="btn-reverse" class="mobile-btn" aria-label="Reverse">REV</button>
+        <div class="face-row">
+          <button type="button" id="btn-reverse" class="mobile-btn face" aria-label="Face left">REV</button>
+          <button type="button" id="btn-forward" class="mobile-btn face" aria-label="Face right">FWD</button>
+        </div>
       </div>
       <div class="mobile-col">
         <button type="button" id="btn-fire" class="mobile-btn fire" aria-label="Fire">FIRE</button>

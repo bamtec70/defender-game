@@ -1,6 +1,6 @@
-# DEFENDER — 1981 Arcade Classic
+# DEFENDER — Williams 1981 Style
 
-A browser recreation of Williams Electronics’ **Defender** (1981), companion to:
+Browser recreation of **Williams Electronics’ Defender** (arcade, 1981), companion to:
 
 - [PAC-MAN](https://bamtec70.github.io/pacman-game/)
 - [MS. PAC-MAN](https://bamtec70.github.io/ms-pacman-game/)
@@ -18,55 +18,58 @@ start index.html
 
 ## Mission
 
-Pilot your ship over a hostile planet. **Protect the humanoids** on the surface from alien **Landers** that try to abduct them. If a Lander escapes into space with a human, it becomes a deadly **Mutant**.
+Fly a long, wrapping planet. **Protect humanoids** from **Landers**. If a Lander reaches the top of the sky with a captive, it becomes a **Mutant**. If every human is lost, the **planet is destroyed** and the wave becomes a mutant assault in space.
+
+## Williams-style systems
+
+- **Thrust / reverse flight** with inertia (not tank-style movement)
+- **Long horizontal laser** beams, rapid fire
+- **Smart bombs** clear all enemies *on screen*
+- **Hyperspace** (risky random teleport)
+- **Scanner** radar across the top of the playfield
+- **Catch falling humans**, then **fly low to set them down** (+500 catch, +500 land)
+- Enemy cast: Landers, Mutants, Bombers (mines), Pods → Swarmers, Baiters
+- Staggered lander materialization, baiters if you stall
+- Extra ship + bomb every **10,000** points
 
 ## Controls
 
 ### Desktop
 
-| Key | Action |
-|-----|--------|
+| Input | Action |
+|-------|--------|
 | **↑ / W** | Climb |
 | **↓ / S** | Dive |
-| **← / A** or **REV** | Face left / reverse |
+| **← / A** | Face left (reverse) |
 | **→ / D** | Face right |
 | **Shift / Z** | Thrust |
-| **Space** | Fire laser |
+| **Space** (hold) | Fire laser |
 | **B** | Smart bomb |
-| **H** | Hyperspace (risky!) |
+| **H** | Hyperspace |
 | **P / Esc** | Pause |
 | **M** | Mute |
 
 ### Phone / touch
 
-On-screen **THR**, **REV**, **▲▼**, **FIRE**, **BOMB**, **HYP**, pause, mute.
+**▲▼** climb/dive · **THR** thrust · **REV / FWD** face · **FIRE** · **BOMB** · **HYP** · pause · mute
 
-## Features
-
-- Wrap-around planet with mountain terrain  
-- **Scanner** minimap (top of screen)  
-- Landers, Mutants, Bombers, Pods → Swarmers, Baiters  
-- Humanoid rescue (shoot captors; catch falling humans)  
-- Smart bombs & hyperspace  
-- Waves, lives, score, high score  
-- Williams-style green vector look  
-- Arcade-inspired **Web Audio** synthesis  
-- Mobile controls  
-
-## Scoring (approx. arcade)
+## Scoring (arcade-style)
 
 | Target | Points |
 |--------|--------|
 | Lander | 150 |
-| Mutant | 200 |
+| Mutant | 150 |
 | Bomber | 250 |
 | Pod | 1000 |
 | Swarmer | 150 |
 | Baiter | 200 |
-| Rescue human | 500 |
+| Catch falling human | 500 |
+| Land human safely | 500 |
 
 ## Files
 
 - `index.html` — shell  
 - `style.css` — CRT green framing + touch UI  
 - `game.js` — full engine  
+
+Fan recreation for personal / educational use. Not affiliated with Williams or its successors.

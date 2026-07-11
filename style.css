@@ -143,7 +143,9 @@ html, body {
   flex-direction: column;
   gap: 6px;
 }
-.mobile-col.mid { justify-content: center; }
+.mobile-col.mid { justify-content: center; gap: 8px; }
+.face-row { display: flex; gap: 6px; }
+.mobile-btn.face { min-width: 44px; font-size: 8px; }
 
 .mobile-btn {
   min-width: 52px;
@@ -160,7 +162,7 @@ html, body {
 }
 .mobile-btn.fire { border-color: #0f0; min-width: 64px; height: 52px; font-size: 11px; }
 .mobile-btn.bomb { border-color: #ff0; color: #ff0; }
-.mobile-btn.thrust { border-color: #0ff; color: #0ff; }
+.mobile-btn.thrust { border-color: #0ff; color: #0ff; min-width: 94px; }
 .mobile-btn:active,
 .mobile-btn.active {
   background: #0f0;
@@ -182,9 +184,9 @@ html, body {
   #game-wrapper { max-height: 100dvh; }
   #mobile-controls { display: flex; }
   #canvas-wrap {
-    width: min(100vw - 16px, var(--board-w, 800px), calc((100dvh - 210px) * 800 / 600));
+    width: min(100vw - 16px, var(--board-w, 896px), calc((100dvh - 220px) * 896 / 672));
   }
-  #game { max-height: calc(100dvh - 210px); }
+  #game { max-height: calc(100dvh - 220px); }
   #hud, #footer, #mobile-controls {
     width: min(100vw - 16px, var(--board-w, 800px));
   }

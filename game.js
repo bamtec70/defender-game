@@ -1,390 +1,446 @@
 /**
- * DEFENDER — 1981 Williams Electronics Arcade Classic
- * Side-scrolling rescue shooter: protect humanoids, destroy landers & mutants.
+ * DEFENDER — Williams Electronics style (1981)
+ * Horizontally scrolling rescue shooter: thrust/reverse flight, long lasers,
+ * smart bombs, hyperspace, humanoid rescue, classic alien cast.
  */
 (() => {
   "use strict";
 
-  // ── Display / world ──────────────────────────────────────────────────────
-  const VW = 800;   // view width
-  const VH = 600;   // view height
-  const WORLD = 6400; // wrap-around planet width
-  const GROUND_Y = VH - 70;
-  const SCAN_H = 48;
-
-  // ── DOM ──────────────────────────────────────────────────────────────────
+  // ── Canvas / layout ──────────────────────────────────────────────────────
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
+  const VW = 896; // wide Williams-ish playfield
+  const VH = 672;
   canvas.width = VW;
   canvas.height = VH;
-  document.documentElement.style.setProperty("--board-w", VW + "px");
 
+  const SCAN_H = 56; // radar band
+  const PLAY_TOP = SCAN_H + 4;
+  const GROUND_BASE = VH - 48;
+  const WORLD = 4096; // planet circumference (world units)
+
+  const overlay = document.getElementById("overlay");
+  const $title = document.getElementById("overlay-title");
+  const $sub = document.getElementById("overlay-sub");
+  const $hint = document.getElementById("overlay-hint");
   const $score = document.getElementById("score");
   const $high = document.getElementById("high-score");
   const $wave = document.getElementById("wave");
   const $bombs = document.getElementById("bombs");
   const $lives = document.getElementById("lives");
   const $humans = document.getElementById("humans-left");
-  const overlay = document.getElementById("overlay");
-  const $title = document.getElementById("overlay-title");
-  const $sub = document.getElementById("overlay-sub");
-  const $hint = document.getElementById("overlay-hint");
-  const $ctrl = document.getElementById("overlay-controls");
 
-  // ── Audio (Williams-style synth approximations) ──────────────────────────
-  let audio = null, muted = false, noiseBuf = null, thrustOsc = null, thrustGain = null;
-  let fireN = 0;
+  // Size CSS board to canvas aspect
+  document.documentElement.style.setProperty("--board-w", VW + "px");
+
+  // ── Audio (arcade-ish synth) ─────────────────────────────────────────────
+  let AC = null;
+  let muted = false;
+  let thrustOsc = null;
+  let thrustGain = null;
+
   function unlockAudio() {
-    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
-    if (audio.state === "suspended") audio.resume();
-    if (!noiseBuf && audio) {
-      const n = audio.sampleRate * 0.3 | 0;
-      noiseBuf = audio.createBuffer(1, n, audio.sampleRate);
-      const d = noiseBuf.getChannelData(0);
-      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    if (!AC) {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
     }
+    if (AC.state === "suspended") AC.resume();
   }
-  function tone(freq, dur, type = "square", vol = 0.04, when = 0, slideTo) {
-    if (muted || !audio) return;
-    const t = audio.currentTime + when;
-    const o = audio.createOscillator();
-    const g = audio.createGain();
+
+  function tone(freq, dur, type = "square", vol = 0.045, when = 0, slideTo) {
+    if (muted || !AC) return;
+    const t0 = AC.currentTime + when;
+    const o = AC.createOscillator();
+    const g = AC.createGain();
     o.type = type;
-    o.frequency.setValueAtTime(Math.max(20, freq), t);
-    if (slideTo != null) o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t + dur);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(audio.destination);
-    o.start(t); o.stop(t + dur + 0.03);
+    o.frequency.setValueAtTime(freq, t0);
+    if (slideTo != null) o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g);
+    g.connect(AC.destination);
+    o.start(t0);
+    o.stop(t0 + dur + 0.02);
   }
-  function noise(dur, vol = 0.04, when = 0, filterFreq = 1000) {
-    if (muted || !audio || !noiseBuf) return;
-    const t = audio.currentTime + when;
-    const src = audio.createBufferSource();
-    src.buffer = noiseBuf;
-    const f = audio.createBiquadFilter();
+
+  function noise(dur, vol = 0.05, when = 0, filterFreq = 1200) {
+    if (muted || !AC) return;
+    const n = Math.floor(AC.sampleRate * dur);
+    const buf = AC.createBuffer(1, n, AC.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = AC.createBufferSource();
+    src.buffer = buf;
+    const f = AC.createBiquadFilter();
     f.type = "bandpass";
     f.frequency.value = filterFreq;
-    const g = audio.createGain();
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f); f.connect(g); g.connect(audio.destination);
-    src.start(t); src.stop(t + dur + 0.02);
+    const g = AC.createGain();
+    const t0 = AC.currentTime + when;
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(f);
+    f.connect(g);
+    g.connect(AC.destination);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
   }
-  function seq(notes, type = "square", vol = 0.035) {
-    let t = 0;
-    for (const n of notes) {
-      const [f, d, gap = 0] = n;
-      if (f > 0) tone(f, d, type, vol, t);
-      t += d + gap;
-    }
-  }
+
   function setThrust(on) {
-    unlockAudio();
-    if (!audio) return;
-    if (on && !muted) {
-      if (!thrustOsc) {
-        thrustOsc = audio.createOscillator();
-        thrustGain = audio.createGain();
-        thrustOsc.type = "sawtooth";
-        thrustOsc.frequency.value = 55;
-        thrustGain.gain.value = 0.012;
-        thrustOsc.connect(thrustGain);
-        thrustGain.connect(audio.destination);
-        thrustOsc.start();
+    if (muted || !AC) {
+      if (thrustOsc) {
+        try { thrustOsc.stop(); } catch (_) {}
+        thrustOsc = null;
+        thrustGain = null;
       }
-      thrustGain.gain.setTargetAtTime(0.014, audio.currentTime, 0.05);
-      thrustOsc.frequency.setTargetAtTime(70 + Math.random() * 15, audio.currentTime, 0.1);
-    } else if (thrustGain) {
-      thrustGain.gain.setTargetAtTime(0.0001, audio.currentTime, 0.08);
+      return;
+    }
+    if (on) {
+      if (thrustOsc) return;
+      thrustOsc = AC.createOscillator();
+      thrustGain = AC.createGain();
+      thrustOsc.type = "sawtooth";
+      thrustOsc.frequency.value = 55;
+      thrustGain.gain.value = 0.018;
+      const f = AC.createBiquadFilter();
+      f.type = "lowpass";
+      f.frequency.value = 280;
+      thrustOsc.connect(f);
+      f.connect(thrustGain);
+      thrustGain.connect(AC.destination);
+      thrustOsc.start();
+    } else if (thrustOsc) {
+      try { thrustOsc.stop(); } catch (_) {}
+      thrustOsc = null;
+      thrustGain = null;
     }
   }
+
   function sfx(name) {
     unlockAudio();
-    if (muted || !audio) return;
+    if (muted || !AC) return;
     if (name === "fire") {
-      // Rapid laser zip
-      const f = 900 + (fireN++ % 3) * 80;
-      tone(f, 0.06, "square", 0.03, 0, 200);
-      tone(f * 1.5, 0.04, "triangle", 0.015);
-    } else if (name === "explode") {
-      noise(0.2, 0.07, 0, 600);
-      tone(120, 0.18, "sawtooth", 0.04, 0, 40);
-      tone(80, 0.15, "square", 0.025, 0.02, 30);
+      tone(880, 0.05, "square", 0.03);
+      tone(440, 0.08, "square", 0.02, 0.02);
     } else if (name === "bomb") {
-      noise(0.35, 0.08, 0, 400);
-      tone(60, 0.3, "sine", 0.06, 0, 30);
-      tone(200, 0.15, "square", 0.03, 0.05, 80);
-      for (let i = 0; i < 5; i++) tone(300 + i * 100, 0.06, "square", 0.02, 0.08 + i * 0.04);
-    } else if (name === "hit") {
-      tone(180, 0.05, "square", 0.03, 0, 90);
-      noise(0.06, 0.03, 0, 1500);
-    } else if (name === "rescue") {
-      seq([[523, 0.06, 0.01], [659, 0.06, 0.01], [784, 0.1, 0]], "square", 0.035);
-    } else if (name === "abduct") {
-      tone(200, 0.2, "triangle", 0.025, 0, 600);
-      tone(400, 0.15, "sine", 0.015, 0.05, 800);
-    } else if (name === "mutant") {
-      tone(150, 0.12, "sawtooth", 0.03, 0, 400);
-      tone(400, 0.12, "sawtooth", 0.025, 0.08, 120);
+      noise(0.35, 0.1, 0, 400);
+      tone(120, 0.4, "sawtooth", 0.06, 0, 40);
     } else if (name === "die") {
-      for (let i = 0; i < 12; i++) tone(400 - i * 25, 0.06, "square", 0.03, i * 0.05);
-      noise(0.3, 0.05, 0.1, 500);
-      setThrust(false);
+      noise(0.4, 0.08, 0, 600);
+      tone(300, 0.5, "sawtooth", 0.05, 0, 40);
+    } else if (name === "explode") {
+      noise(0.18, 0.07, 0, 900);
+      tone(200, 0.15, "square", 0.04, 0, 60);
+    } else if (name === "abduct") {
+      tone(220, 0.12, "sine", 0.04);
+      tone(330, 0.18, "sine", 0.035, 0.1);
+      tone(440, 0.22, "sine", 0.03, 0.22);
+    } else if (name === "mutant") {
+      tone(160, 0.08, "square", 0.05);
+      tone(90, 0.2, "sawtooth", 0.045, 0.06);
+    } else if (name === "rescue") {
+      tone(523, 0.08, "square", 0.04);
+      tone(659, 0.1, "square", 0.04, 0.08);
+      tone(784, 0.14, "square", 0.04, 0.16);
+    } else if (name === "land") {
+      tone(392, 0.1, "square", 0.04);
+      tone(523, 0.14, "square", 0.04, 0.1);
     } else if (name === "hyper") {
+      tone(100, 0.35, "sawtooth", 0.05, 0, 900);
       noise(0.25, 0.05, 0, 2000);
-      tone(100, 0.2, "sawtooth", 0.04, 0, 2000);
-      tone(2000, 0.15, "square", 0.02, 0.05, 100);
-    } else if (name === "start") {
-      // Williams Defender-ish fanfare (descending computer tones)
-      seq([
-        [880, 0.08, 0.02], [740, 0.08, 0.02], [659, 0.08, 0.02], [554, 0.1, 0.04],
-        [494, 0.08, 0.02], [440, 0.08, 0.02], [392, 0.08, 0.02], [330, 0.14, 0.05],
-        [392, 0.1, 0.02], [494, 0.1, 0.02], [659, 0.16, 0],
-      ], "square", 0.034);
-    } else if (name === "wave") {
-      seq([[330, 0.08, 0.02], [392, 0.08, 0.02], [523, 0.12, 0]], "square", 0.032);
-    } else if (name === "1up") {
-      seq([[523, 0.07, 0.01], [659, 0.07, 0.01], [784, 0.07, 0.01], [1047, 0.12, 0]], "square", 0.036);
+    } else if (name === "start" || name === "wave") {
+      [392, 440, 523, 659].forEach((f, i) => tone(f, 0.1, "square", 0.04, i * 0.09));
     } else if (name === "alert") {
-      tone(880, 0.08, "square", 0.03);
-      tone(660, 0.08, "square", 0.03, 0.1);
-    } else if (name === "thrust") {
-      // one-shot thrust blip if continuous not used
-      tone(60, 0.08, "sawtooth", 0.02, 0, 90);
+      tone(660, 0.08, "square", 0.05);
+      tone(440, 0.12, "square", 0.05, 0.1);
+    } else if (name === "planet") {
+      noise(0.8, 0.12, 0, 300);
+      tone(80, 1.0, "sawtooth", 0.08, 0, 30);
+    } else if (name === "extra") {
+      [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.1, "square", 0.045, i * 0.08));
+    } else if (name === "materialize") {
+      tone(200, 0.15, "sine", 0.04, 0, 600);
     }
   }
 
-  // ── State ────────────────────────────────────────────────────────────────
-  let score = 0;
-  let high = +localStorage.getItem("defender_high") || 0;
-  let wave = 1, lives = 3, bombs = 3, extra = false;
-  let state = "title";
-  let readyT = 0, dieT = 0, clearT = 0;
-  let time = 0, prev = 0, baiterTimer = 0;
-  let camX = 0;
-  let ship, bullets, enemies, humans, particles, stars, terrain;
-  let keys = {};
-  let thrustHeld = false, fireHeld = false, fireCD = 0;
-  let flashT = 0;
-
-  function pad(n) { return String(n).padStart(2, "0"); }
+  // ── Helpers ──────────────────────────────────────────────────────────────
   function wrap(x) {
     x %= WORLD;
     if (x < 0) x += WORLD;
     return x;
   }
-  function wrapDelta(a, b) {
-    let d = b - a;
+  function wrapDelta(from, to) {
+    let d = to - from;
     if (d > WORLD / 2) d -= WORLD;
     if (d < -WORLD / 2) d += WORLD;
     return d;
   }
-  function screenX(wx) {
-    let d = wrapDelta(camX, wx);
-    return VW * 0.35 + d; // ship sits left-of-center like original feel
+  function clamp(v, a, b) {
+    return Math.max(a, Math.min(b, v));
   }
-  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function pad(n) {
+    return String(Math.floor(n)).padStart(2, "0");
+  }
+  function rnd(a, b) {
+    return a + Math.random() * (b - a);
+  }
+  function chance(p) {
+    return Math.random() < p;
+  }
 
-  function hud() {
-    $score.textContent = pad(score);
-    $high.textContent = pad(high);
-    $wave.textContent = String(wave);
-    $bombs.textContent = String(bombs);
-    $lives.innerHTML = "";
-    for (let i = 0; i < lives; i++) {
-      const d = document.createElement("div");
-      d.className = "life-icon";
-      $lives.appendChild(d);
-    }
-    const alive = humans.filter((h) => h.state !== "dead" && h.state !== "gone").length;
-    $humans.textContent = "HUMANS " + alive;
-  }
-  function addScore(n) {
-    score += n;
-    if (score > high) {
-      high = score;
-      localStorage.setItem("defender_high", String(high));
-    }
-    if (!extra && score >= 10000) { extra = true; lives++; sfx("1up"); }
-    hud();
-  }
-  function showOV(title, sub, cls) {
-    overlay.classList.remove("hidden", "ready", "paused", "gameover");
-    if (cls) overlay.classList.add(cls);
-    $title.textContent = title;
-    $sub.textContent = sub || "";
-    const home = title === "DEFENDER";
-    $hint.style.display = home ? "" : "none";
-    if ($ctrl) $ctrl.style.display = home ? "" : "none";
-  }
-  function hideOV() { overlay.classList.add("hidden"); }
-  function isTouchPrimary() {
-    return window.matchMedia("(pointer: coarse)").matches
-      || window.matchMedia("(max-width: 900px)").matches
-      || ("ontouchstart" in window);
-  }
+  // ── State ────────────────────────────────────────────────────────────────
+  let state = "title"; // title | ready | play | die | clear | over | planet
+  let score = 0;
+  let high = Number(localStorage.getItem("defender_high_v2") || 0);
+  let wave = 1;
+  let lives = 3;
+  let bombs = 3;
+  let extrasAt = 0; // score milestones claimed (10000 each)
+
+  let ship = null;
+  let camX = 0;
+  let humans = [];
+  let enemies = [];
+  let lasers = []; // long beam segments
+  let mines = []; // bomber mines
+  let particles = [];
+  let terrain = [];
+  let stars = [];
+  let planetAlive = true;
+
+  let fireCD = 0;
+  let flashT = 0;
+  let readyT = 0;
+  let dieT = 0;
+  let clearT = 0;
+  let planetT = 0;
+  let baiterTimer = 0;
+  let landerSpawnQueue = [];
+  let landerSpawnT = 0;
+  let materializeT = 0;
+
+  // input
+  const keys = Object.create(null);
+  let thrustHeld = false;
+  let fireHeld = false;
 
   // ── Terrain ──────────────────────────────────────────────────────────────
   function buildTerrain() {
     terrain = [];
     let h = 40;
-    for (let i = 0; i <= WORLD; i += 20) {
-      h += (Math.random() - 0.5) * 18;
-      h = clamp(h, 12, 90);
-      // smooth valleys
-      if (i % 400 < 80) h = Math.max(12, h - 2);
-      terrain.push({ x: i, h });
+    for (let x = 0; x < WORLD; x += 16) {
+      h += rnd(-12, 12);
+      h = clamp(h, 18, 110);
+      // mountain peaks
+      if (chance(0.04)) h = clamp(h + rnd(20, 50), 18, 130);
+      terrain.push({ x, h });
     }
-    // close loop
-    terrain[terrain.length - 1].h = terrain[0].h;
   }
+
   function groundAt(wx) {
     wx = wrap(wx);
-    const step = 20;
-    const i = Math.floor(wx / step) % (terrain.length - 1);
-    const t0 = terrain[i], t1 = terrain[i + 1];
-    const f = (wx - t0.x) / step;
-    const hh = t0.h + (t1.h - t0.h) * f;
-    return GROUND_Y - hh;
+    const step = 16;
+    const i = Math.floor(wx / step) % terrain.length;
+    const j = (i + 1) % terrain.length;
+    const t = (wx % step) / step;
+    const h = terrain[i].h * (1 - t) + terrain[j].h * t;
+    return GROUND_BASE - h;
+  }
+
+  // ── HUD / overlay ────────────────────────────────────────────────────────
+  function hud() {
+    $score.textContent = pad(score);
+    $high.textContent = pad(high);
+    $wave.textContent = String(wave);
+    $bombs.textContent = String(bombs);
+    if ($lives) {
+      $lives.textContent = "SHIPS " + "▲".repeat(Math.max(0, lives));
+    }
+    if ($humans) {
+      const n = humans.filter((h) => h.state === "ground" || h.state === "captured" || h.state === "falling" || h.state === "carried").length;
+      $humans.textContent = planetAlive ? "HUMANS " + n : "SPACE";
+    }
+  }
+
+  function addScore(n) {
+    score += n;
+    if (score > high) {
+      high = score;
+      localStorage.setItem("defender_high_v2", String(high));
+    }
+    // Extra ship + bomb every 10,000 (Williams default)
+    while (score >= (extrasAt + 1) * 10000) {
+      extrasAt++;
+      lives++;
+      bombs = Math.min(bombs + 1, 9);
+      sfx("extra");
+    }
+    hud();
+  }
+
+  function showOV(title, sub, hint) {
+    overlay.classList.remove("hidden");
+    $title.textContent = title;
+    $sub.textContent = sub || "";
+    if ($hint) $hint.textContent = hint || "";
+  }
+  function hideOV() {
+    overlay.classList.add("hidden");
   }
 
   // ── Entities ─────────────────────────────────────────────────────────────
-  function spawnShip() {
+  function spawnShip(safeX) {
+    const x = safeX != null ? safeX : WORLD * 0.25;
     ship = {
-      x: WORLD * 0.2,
-      y: VH * 0.45,
-      vx: 0, vy: 0,
+      x,
+      y: (PLAY_TOP + GROUND_BASE) * 0.45,
+      vx: 0,
+      vy: 0,
       face: 1, // 1 right, -1 left
       alive: true,
-      inv: 0,
+      inv: 2000,
+      carrying: null,
     };
     camX = ship.x;
+    materializeT = 400;
+    sfx("materialize");
   }
 
-  function spawnWave(n) {
+  function makeHuman(x) {
+    return {
+      x: wrap(x),
+      y: 0,
+      state: "ground", // ground | captured | falling | carried | dead | gone
+      captor: null,
+      carrier: null,
+      vy: 0,
+      walk: Math.random() * 200,
+    };
+  }
+
+  function queueWave(n) {
     enemies = [];
-    bullets = [];
+    lasers = [];
+    mines = [];
     particles = [];
-    baiterTimer = 45000 - Math.min(20000, n * 2000);
+    landerSpawnQueue = [];
+    landerSpawnT = 0;
+    planetAlive = true;
 
-    const nLanders = Math.min(4 + n * 2, 18);
-    const nBombers = Math.min(Math.floor((n - 1) / 2), 6);
-    const nPods = n >= 3 ? Math.min(1 + Math.floor(n / 3), 4) : 0;
+    // Classic-ish counts that ramp
+    const nLanders = Math.min(15 + n * 3, 40);
+    const nBombers = n >= 2 ? Math.min(Math.floor(n / 2) + 1, 8) : 0;
+    const nPods = n >= 3 ? Math.min(Math.floor((n - 2) / 2) + 1, 5) : 0;
 
+    // Stagger lander teleports (Williams style)
     for (let i = 0; i < nLanders; i++) {
-      enemies.push({
-        type: "lander",
+      landerSpawnQueue.push({
+        delay: 200 + i * (420 - Math.min(200, n * 12)) + Math.random() * 200,
         x: Math.random() * WORLD,
-        y: 80 + Math.random() * 200,
-        vx: (Math.random() - 0.5) * 40,
-        vy: 0,
-        target: null,
-        carrying: null,
-        hp: 1,
-        bob: Math.random() * 100,
-        shootT: 1000 + Math.random() * 2000,
+        y: PLAY_TOP + 40 + Math.random() * 160,
       });
     }
     for (let i = 0; i < nBombers; i++) {
       enemies.push({
         type: "bomber",
         x: Math.random() * WORLD,
-        y: 100 + Math.random() * 150,
-        vx: (Math.random() < 0.5 ? -1 : 1) * (50 + n * 5),
+        y: PLAY_TOP + 60 + Math.random() * 120,
+        vx: (chance(0.5) ? -1 : 1) * (70 + n * 6),
         vy: 0,
-        dropT: 800 + Math.random() * 1500,
+        dropT: rnd(600, 1600),
         hp: 1,
-        bob: 0,
+        bob: Math.random() * 100,
+        shootT: 0,
+        materialize: 300,
       });
     }
     for (let i = 0; i < nPods; i++) {
       enemies.push({
         type: "pod",
         x: Math.random() * WORLD,
-        y: 120 + Math.random() * 180,
-        vx: (Math.random() - 0.5) * 30,
-        vy: (Math.random() - 0.5) * 20,
+        y: PLAY_TOP + 80 + Math.random() * 160,
+        vx: rnd(-40, 40),
+        vy: rnd(-30, 30),
         hp: 1,
         bob: 0,
+        materialize: 300,
       });
     }
 
-    // Humans on surface
+    // Humanoids on surface
+    const nHum = Math.max(4, 10 - Math.floor((n - 1) / 2));
     humans = [];
-    const nHum = Math.max(5, 10 - Math.floor(n / 2));
     for (let i = 0; i < nHum; i++) {
-      const x = (i + 0.5) * (WORLD / nHum) + (Math.random() - 0.5) * 80;
-      humans.push({
-        x: wrap(x),
-        y: 0, // set from terrain
-        state: "ground", // ground | captured | falling | rescued | dead | gone
-        captor: null,
-        vy: 0,
-        walk: Math.random() * 100,
-      });
+      const x = ((i + 0.5) / nHum) * WORLD + rnd(-40, 40);
+      const h = makeHuman(x);
+      h.y = groundAt(h.x) - 6;
+      humans.push(h);
     }
-    for (const h of humans) h.y = groundAt(h.x) - 8;
-  }
 
-  function burst(x, y, color, n = 10) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const sp = 40 + Math.random() * 120;
-      particles.push({
-        x, y,
-        vx: Math.cos(a) * sp,
-        vy: Math.sin(a) * sp,
-        life: 300 + Math.random() * 400,
-        color,
-      });
-    }
+    baiterTimer = Math.max(18000, 55000 - n * 3500);
   }
 
   function beginWave(n) {
     wave = n;
-    if (n === 1) bombs = 3;
-    else bombs = Math.min(5, bombs + 1);
+    queueWave(n);
     spawnShip();
-    spawnWave(wave);
     state = "ready";
-    readyT = 1800;
-    baiterTimer = 40000 - Math.min(25000, wave * 2500);
+    readyT = 1600;
     fireCD = 0;
     flashT = 0;
     hud();
-    showOV("WAVE " + wave, "DEFEND HUMANITY", "ready");
+    showOV("ATTACK WAVE " + wave, "DEFEND THE HUMANOIDS", "GET READY");
     sfx(n === 1 ? "start" : "wave");
   }
 
   function beginGame() {
     unlockAudio();
-    score = 0; lives = 3; bombs = 3; wave = 1; extra = false;
+    score = 0;
+    lives = 3;
+    bombs = 3;
+    wave = 1;
+    extrasAt = 0;
     buildTerrain();
-    // stars
     stars = [];
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 120; i++) {
       stars.push({
         x: Math.random() * WORLD,
-        y: 20 + Math.random() * (GROUND_Y - 80),
-        b: 0.3 + Math.random() * 0.7,
+        y: PLAY_TOP + Math.random() * (GROUND_BASE - PLAY_TOP - 40),
+        b: 0.25 + Math.random() * 0.75,
+        s: Math.random() < 0.15 ? 2 : 1,
       });
     }
     beginWave(1);
   }
 
+  function burst(x, y, color, n = 12) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 50 + Math.random() * 160;
+      particles.push({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        life: 250 + Math.random() * 450,
+        color,
+        size: 1 + (Math.random() * 2) | 0,
+      });
+    }
+  }
+
   // ── Combat ───────────────────────────────────────────────────────────────
   function fireLaser() {
-    if (!ship || !ship.alive || fireCD > 0) return;
-    fireCD = 90;
-    bullets.push({
-      x: ship.x + ship.face * 18,
+    if (!ship || !ship.alive || fireCD > 0 || state !== "play") return;
+    fireCD = 70; // rapid fire like arcade
+    // Long horizontal beam ahead of ship (Williams hallmark)
+    const len = 320;
+    lasers.push({
+      x: ship.x + ship.face * 14,
       y: ship.y,
-      vx: ship.face * 520 + ship.vx * 0.3,
-      vy: ship.vy * 0.15,
-      life: 450,
-      friendly: true,
+      face: ship.face,
+      len,
+      life: 70,
+      dmgLeft: true, // hits once per enemy pass tracked via enemy id set
+      hit: new Set(),
     });
     sfx("fire");
   }
@@ -393,583 +449,979 @@
     if (!ship || !ship.alive || bombs <= 0 || state !== "play") return;
     bombs--;
     hud();
-    flashT = 200;
+    flashT = 280;
     sfx("bomb");
-    // Destroy enemies near ship (on screen-ish)
+
+    // Destroy every enemy currently visible on screen
+    const left = camX - VW * 0.15;
+    const right = left + VW;
+
+    function onScreen(wx) {
+      const sx = screenX(wx);
+      return sx > -20 && sx < VW + 20;
+    }
+
     for (const e of enemies) {
       if (e.dead) continue;
-      const d = Math.abs(wrapDelta(ship.x, e.x));
-      if (d < VW * 0.7 && Math.abs(e.y - ship.y) < VH) {
-        killEnemy(e, true);
-      }
+      if (onScreen(e.x)) killEnemy(e, true);
     }
-    // kill enemy bullets
-    bullets = bullets.filter((b) => b.friendly);
+    // Mines on screen
+    mines = mines.filter((m) => {
+      if (onScreen(m.x)) {
+        burst(m.x, m.y, "#ff0", 6);
+        return false;
+      }
+      return true;
+    });
   }
 
   function hyperspace() {
     if (!ship || !ship.alive || state !== "play") return;
     sfx("hyper");
-    burst(ship.x, ship.y, "#0ff", 14);
+    burst(ship.x, ship.y, "#0ff", 16);
+    // Drop carried human (risk)
+    if (ship.carrying) {
+      const h = ship.carrying;
+      h.state = "falling";
+      h.carrier = null;
+      h.vy = 30;
+      ship.carrying = null;
+    }
     ship.x = Math.random() * WORLD;
-    ship.y = 80 + Math.random() * (GROUND_Y - 160);
+    ship.y = PLAY_TOP + 40 + Math.random() * (GROUND_BASE - PLAY_TOP - 100);
     ship.vx = 0;
     ship.vy = 0;
-    ship.inv = 1500;
-    // risk of death ~15%
-    if (Math.random() < 0.12) {
+    ship.inv = 1200;
+    materializeT = 350;
+    // ~25% bad jump (arcade is famously risky)
+    if (chance(0.22)) {
       killShip();
-    } else {
-      burst(ship.x, ship.y, "#0f0", 10);
+      return;
     }
+    // materialize into enemy / mine
+    for (const e of enemies) {
+      if (e.dead) continue;
+      if (Math.abs(wrapDelta(ship.x, e.x)) < 18 && Math.abs(ship.y - e.y) < 16) {
+        killShip();
+        return;
+      }
+    }
+    for (const m of mines) {
+      if (Math.abs(wrapDelta(ship.x, m.x)) < 14 && Math.abs(ship.y - m.y) < 14) {
+        killShip();
+        return;
+      }
+    }
+    burst(ship.x, ship.y, "#0f0", 12);
   }
 
   function killEnemy(e, fromBomb) {
     if (e.dead) return;
     e.dead = true;
+
     let pts = 150;
     if (e.type === "lander") pts = 150;
-    else if (e.type === "mutant") pts = 200;
+    else if (e.type === "mutant") pts = 150;
     else if (e.type === "bomber") pts = 250;
     else if (e.type === "pod") pts = 1000;
     else if (e.type === "swarmer") pts = 150;
     else if (e.type === "baiter") pts = 200;
+    addScore(pts);
+
+    // Drop carried human
     if (e.carrying) {
-      // drop human
       const h = e.carrying;
       h.state = "falling";
       h.captor = null;
       h.vy = 20;
       e.carrying = null;
     }
+
+    // Pod → Swarmers
     if (e.type === "pod") {
-      // spawn swarmers
       for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.random();
         enemies.push({
           type: "swarmer",
-          x: e.x + (Math.random() - 0.5) * 30,
-          y: e.y + (Math.random() - 0.5) * 30,
-          vx: (Math.random() - 0.5) * 120,
-          vy: (Math.random() - 0.5) * 120,
+          x: e.x,
+          y: e.y,
+          vx: Math.cos(a) * 120,
+          vy: Math.sin(a) * 120,
           hp: 1,
           bob: 0,
-          life: 12000,
+          life: 20000,
+          materialize: 0,
         });
       }
     }
-    addScore(pts);
-    burst(e.x, e.y, e.type === "mutant" ? "#f0f" : "#0f0", fromBomb ? 16 : 10);
+
+    const col =
+      e.type === "mutant" ? "#f0f" : e.type === "baiter" ? "#f44" : "#0f0";
+    burst(e.x, e.y, col, fromBomb ? 8 : 14);
     sfx("explode");
   }
 
   function killShip() {
     if (!ship || !ship.alive) return;
+    if (ship.carrying) {
+      const h = ship.carrying;
+      h.state = "falling";
+      h.carrier = null;
+      h.vy = 40;
+      ship.carrying = null;
+    }
+    burst(ship.x, ship.y, "#fff", 18);
+    burst(ship.x, ship.y, "#0f0", 10);
+    sfx("die");
     ship.alive = false;
     setThrust(false);
-    burst(ship.x, ship.y, "#0f0", 20);
-    burst(ship.x, ship.y, "#fff", 10);
-    sfx("die");
     lives--;
     hud();
     state = "die";
-    dieT = 1800;
+    dieT = 1600;
   }
 
-  // ── Update ───────────────────────────────────────────────────────────────
+  function destroyPlanet() {
+    if (!planetAlive) return;
+    planetAlive = false;
+    sfx("planet");
+    // All remaining ground humans die; captives become mutants immediately
+    for (const h of humans) {
+      if (h.state === "ground" || h.state === "falling") {
+        h.state = "dead";
+        burst(h.x, h.y, "#f80", 5);
+      } else if (h.state === "captured" && h.captor) {
+        h.state = "gone";
+        h.captor.carrying = null;
+        h.captor.type = "mutant";
+        h.captor.vx = rnd(-100, 100);
+        h.captor.vy = rnd(-80, 80);
+      } else if (h.state === "carried") {
+        h.state = "dead";
+        if (ship) ship.carrying = null;
+      }
+    }
+    // Remaining landers mutate
+    for (const e of enemies) {
+      if (e.type === "lander") {
+        if (e.carrying) {
+          e.carrying.state = "gone";
+          e.carrying = null;
+        }
+        e.type = "mutant";
+      }
+    }
+    // Terrain flash / flatten feel
+    for (const t of terrain) t.h = Math.max(4, t.h * 0.15);
+    state = "planet";
+    planetT = 1400;
+    showOV("PLANET DESTROYED", "MUTANT ATTACK", "");
+  }
+
+  // ── Screen mapping ───────────────────────────────────────────────────────
+  // Ship stays ~35% from facing-forward edge so you see ahead
+  function updateCamera() {
+    if (!ship) return;
+    // Keep ship near horizontal center-left/right depending on face
+    const desired = ship.face > 0 ? VW * 0.32 : VW * 0.68;
+    // camX is world-x that maps to screen 0... actually we use screenX with cam as ship.x - offset
+    camX = ship.x;
+  }
+
+  function screenX(wx) {
+    // Place ship at fixed screen position based on facing (see ahead)
+    const shipScreen =
+      ship && ship.alive ? (ship.face > 0 ? VW * 0.32 : VW * 0.68) : VW * 0.4;
+    const origin = (ship ? ship.x : camX) - shipScreen;
+    let sx = wx - origin;
+    while (sx < -WORLD * 0.5) sx += WORLD;
+    while (sx > WORLD * 0.5) sx -= WORLD;
+    return sx;
+  }
+
+  // ── Update systems ───────────────────────────────────────────────────────
   function updateShip(dt) {
     if (!ship || !ship.alive) return;
-    const thr = thrustHeld || keys["ShiftLeft"] || keys["ShiftRight"] || keys["KeyZ"] || keys["z"] || keys["Z"];
+    const thr =
+      thrustHeld ||
+      keys["ShiftLeft"] ||
+      keys["ShiftRight"] ||
+      keys["KeyZ"] ||
+      keys["z"] ||
+      keys["Z"];
     const up = keys["ArrowUp"] || keys["w"] || keys["W"] || keys["KeyW"] || keys._up;
     const dn = keys["ArrowDown"] || keys["s"] || keys["S"] || keys["KeyS"] || keys._down;
-    const rev = keys["ArrowLeft"] || keys["a"] || keys["A"] || keys["KeyA"] || keys._rev;
-    const fwd = keys["ArrowRight"] || keys["d"] || keys["D"] || keys["KeyD"];
+    const rev =
+      keys["ArrowLeft"] ||
+      keys["a"] ||
+      keys["A"] ||
+      keys["KeyA"] ||
+      keys._rev;
+    // Right / FWD is face-right only (not thrust) — arcade reverse is separate
+    const faceR =
+      keys["ArrowRight"] ||
+      keys["d"] ||
+      keys["D"] ||
+      keys["KeyD"] ||
+      keys._fwd;
 
+    // Reverse / face
     if (rev) ship.face = -1;
-    if (fwd) ship.face = 1;
+    if (faceR) ship.face = 1;
 
-    // Thrust in facing direction
+    // Thrust: accelerate along face — heavy inertia (Williams feel)
+    const maxSpeed = 380;
     if (thr) {
-      ship.vx += ship.face * 280 * (dt / 1000);
+      ship.vx += ship.face * 520 * (dt / 1000);
       setThrust(true);
     } else {
       setThrust(false);
-      ship.vx *= Math.pow(0.4, dt / 1000); // drag
+      // slight vacuum drag
+      ship.vx *= Math.pow(0.92, dt / 16);
     }
-    if (up) ship.vy -= 320 * (dt / 1000);
-    if (dn) ship.vy += 320 * (dt / 1000);
-    ship.vy *= Math.pow(0.35, dt / 1000);
+    // Vertical is direct but with lag (joystick elevation)
+    const vertAcc = 700;
+    if (up) ship.vy -= vertAcc * (dt / 1000);
+    if (dn) ship.vy += vertAcc * (dt / 1000);
+    if (!up && !dn) ship.vy *= Math.pow(0.85, dt / 16);
 
-    ship.vx = clamp(ship.vx, -320, 320);
-    ship.vy = clamp(ship.vy, -260, 260);
+    ship.vx = clamp(ship.vx, -maxSpeed, maxSpeed);
+    ship.vy = clamp(ship.vy, -300, 300);
 
     ship.x = wrap(ship.x + ship.vx * (dt / 1000));
     ship.y += ship.vy * (dt / 1000);
 
-    const gY = groundAt(ship.x) - 10;
+    // Bounds
+    const gY = planetAlive ? groundAt(ship.x) - 12 : GROUND_BASE + 20;
     if (ship.y > gY) {
       ship.y = gY;
       ship.vy = Math.min(0, ship.vy);
-      // crash if hard hit
-      if (Math.abs(ship.vy) > 50 || (!thr && Math.abs(ship.vx) > 200)) {
-        // gentle slide on ground ok
-      }
     }
-    if (ship.y < SCAN_H + 20) {
-      ship.y = SCAN_H + 20;
+    if (ship.y < PLAY_TOP + 16) {
+      ship.y = PLAY_TOP + 16;
       ship.vy = Math.max(0, ship.vy);
     }
 
-    // Camera follow
-    const targetCam = ship.x - VW * 0.35 * 0; // screenX uses cam
-    camX = wrap(ship.x - 0); // ship world x; screen places it
-    // smooth: camX tracks ship
-    camX = ship.x;
-
     if (ship.inv > 0) ship.inv -= dt;
+    if (materializeT > 0) materializeT -= dt;
+
+    // Carry human under ship
+    if (ship.carrying) {
+      const h = ship.carrying;
+      h.x = ship.x;
+      h.y = ship.y + 16;
+      // Land human: fly low and slow near ground
+      if (planetAlive) {
+        const ground = groundAt(ship.x) - 6;
+        if (ship.y > ground - 28 && Math.abs(ship.vy) < 80 && Math.abs(ship.vx) < 120) {
+          h.state = "ground";
+          h.carrier = null;
+          h.y = ground;
+          h.vy = 0;
+          ship.carrying = null;
+          addScore(500);
+          sfx("land");
+        }
+      }
+    }
 
     // Catch falling humans
-    for (const h of humans) {
-      if (h.state === "falling") {
-        if (Math.abs(wrapDelta(ship.x, h.x)) < 22 && Math.abs(ship.y - h.y) < 20) {
-          h.state = "ground";
+    if (!ship.carrying) {
+      for (const h of humans) {
+        if (h.state !== "falling") continue;
+        if (Math.abs(wrapDelta(ship.x, h.x)) < 20 && Math.abs(ship.y - h.y) < 18) {
+          h.state = "carried";
+          h.carrier = ship;
+          h.captor = null;
           h.vy = 0;
-          h.y = groundAt(h.x) - 8;
+          ship.carrying = h;
           addScore(500);
           sfx("rescue");
-        }
-      }
-    }
-  }
-
-  function updateBullets(dt) {
-    for (const b of bullets) {
-      b.x = wrap(b.x + b.vx * (dt / 1000));
-      b.y += b.vy * (dt / 1000);
-      b.life -= dt;
-    }
-    bullets = bullets.filter((b) => b.life > 0 && b.y > SCAN_H && b.y < GROUND_Y + 20);
-
-    // collisions
-    for (const b of bullets) {
-      if (!b.friendly) {
-        if (ship && ship.alive && ship.inv <= 0) {
-          if (Math.abs(wrapDelta(ship.x, b.x)) < 14 && Math.abs(ship.y - b.y) < 10) {
-            b.life = 0;
-            killShip();
-          }
-        }
-        continue;
-      }
-      for (const e of enemies) {
-        if (e.dead) continue;
-        const hitR = e.type === "pod" ? 16 : e.type === "bomber" ? 14 : 12;
-        if (Math.abs(wrapDelta(e.x, b.x)) < hitR && Math.abs(e.y - b.y) < hitR) {
-          b.life = 0;
-          killEnemy(e, false);
           break;
         }
       }
     }
+
+    // Continuous fire while held
+    if (fireHeld || keys[" "] || keys["Space"] || keys["Spacebar"]) {
+      fireLaser();
+    }
+
+    updateCamera();
+  }
+
+  function updateLasers(dt) {
+    for (const L of lasers) {
+      L.life -= dt;
+      // Beam is instant-ish horizontal volume; move slightly with face
+      L.x = wrap(L.x + L.face * 900 * (dt / 1000));
+
+      for (const e of enemies) {
+        if (e.dead || L.hit.has(e)) continue;
+        // Beam hits if enemy y near beam and x within beam span in face direction
+        if (Math.abs(e.y - L.y) > 10) continue;
+        const dx = wrapDelta(L.x, e.x);
+        // laser extends in face direction from L.x
+        if (L.face > 0 && dx >= -8 && dx <= L.len) {
+          L.hit.add(e);
+          killEnemy(e, false);
+        } else if (L.face < 0 && dx <= 8 && dx >= -L.len) {
+          L.hit.add(e);
+          killEnemy(e, false);
+        }
+      }
+      // Mines
+      for (let i = mines.length - 1; i >= 0; i--) {
+        const m = mines[i];
+        if (Math.abs(m.y - L.y) > 10) continue;
+        const dx = wrapDelta(L.x, m.x);
+        if ((L.face > 0 && dx >= -8 && dx <= L.len) || (L.face < 0 && dx <= 8 && dx >= -L.len)) {
+          burst(m.x, m.y, "#ff0", 6);
+          mines.splice(i, 1);
+        }
+      }
+    }
+    lasers = lasers.filter((L) => L.life > 0);
   }
 
   function updateHumans(dt) {
     for (const h of humans) {
       h.walk += dt;
       if (h.state === "ground") {
-        h.y = groundAt(h.x) - 8;
-        // slight wander
-        h.x = wrap(h.x + Math.sin(h.walk / 500) * 0.02 * dt);
-      } else if (h.state === "captured" && h.captor) {
+        h.y = groundAt(h.x) - 6;
+        // tiny wander
+        h.x = wrap(h.x + Math.sin(h.walk / 400) * 0.015 * dt);
+      } else if (h.state === "captured" && h.captor && !h.captor.dead) {
         h.x = h.captor.x;
-        h.y = h.captor.y + 16;
-        // escaped top?
-        if (h.captor.y < SCAN_H + 30) {
-          // become mutant
-          h.state = "gone";
-          h.captor.carrying = null;
-          h.captor.type = "mutant";
-          h.captor.vx = (Math.random() - 0.5) * 100;
-          h.captor.vy = (Math.random() - 0.5) * 80;
-          sfx("mutant");
-          addScore(0);
-        }
+        h.y = h.captor.y + 14;
       } else if (h.state === "falling") {
-        h.vy += 180 * (dt / 1000);
+        h.vy += 220 * (dt / 1000);
         h.y += h.vy * (dt / 1000);
-        const g = groundAt(h.x) - 8;
+        if (!planetAlive) {
+          // fall forever / die
+          if (h.y > VH + 40) h.state = "dead";
+          continue;
+        }
+        const g = groundAt(h.x) - 6;
         if (h.y >= g) {
-          if (h.vy > 160) {
+          if (h.vy > 200) {
             h.state = "dead";
-            burst(h.x, h.y, "#f80", 6);
+            burst(h.x, h.y, "#f80", 8);
+            sfx("explode");
+            checkPlanetCollapse();
           } else {
             h.state = "ground";
             h.y = g;
             h.vy = 0;
           }
         }
+      } else if (h.state === "carried") {
+        // position set by ship
       }
     }
   }
 
+  function checkPlanetCollapse() {
+    if (!planetAlive) return;
+    const any = humans.some(
+      (h) =>
+        h.state === "ground" ||
+        h.state === "captured" ||
+        h.state === "falling" ||
+        h.state === "carried"
+    );
+    if (!any) destroyPlanet();
+  }
+
+  function spawnLander(spec) {
+    enemies.push({
+      type: "lander",
+      x: wrap(spec.x),
+      y: spec.y,
+      vx: rnd(-30, 30),
+      vy: 0,
+      target: null,
+      carrying: null,
+      hp: 1,
+      bob: Math.random() * 100,
+      shootT: rnd(800, 2200),
+      materialize: 280,
+    });
+    burst(spec.x, spec.y, "#0f0", 6);
+  }
+
   function updateEnemies(dt) {
-    // assign lander targets
+    // Staggered lander materialization
+    if (landerSpawnQueue.length) {
+      landerSpawnT += dt;
+      while (landerSpawnQueue.length && landerSpawnT >= landerSpawnQueue[0].delay) {
+        const spec = landerSpawnQueue.shift();
+        spawnLander(spec);
+      }
+    }
+
     const freeHumans = humans.filter((h) => h.state === "ground");
 
     for (const e of enemies) {
       if (e.dead) continue;
       e.bob += dt;
+      if (e.materialize > 0) e.materialize -= dt;
 
       if (e.type === "lander") {
         if (e.carrying) {
-          // fly up with human
-          e.vy = -55 - wave * 3;
-          e.vx *= 0.95;
+          // Climb to top of sky → mutate
+          e.vy = -70 - wave * 2;
+          e.vx *= 0.98;
           e.y += e.vy * (dt / 1000);
           e.x = wrap(e.x + e.vx * (dt / 1000));
-        } else {
-          // seek a human
-          if (!e.target || e.target.state !== "ground") {
-            e.target = freeHumans.length
-              ? freeHumans[(Math.random() * freeHumans.length) | 0]
-              : null;
+          if (e.y <= PLAY_TOP + 18) {
+            // Mutate
+            const h = e.carrying;
+            h.state = "gone";
+            h.captor = null;
+            e.carrying = null;
+            e.type = "mutant";
+            e.vx = rnd(-140, 140);
+            e.vy = rnd(-100, 100);
+            sfx("mutant");
+            checkPlanetCollapse();
           }
-          if (e.target) {
-            const dx = wrapDelta(e.x, e.target.x);
-            e.vx += Math.sign(dx) * 50 * (dt / 1000);
-            const ty = e.target.y - 30;
-            e.vy += Math.sign(ty - e.y) * 40 * (dt / 1000);
-            // grab
-            if (Math.abs(dx) < 12 && Math.abs(e.y - (e.target.y - 14)) < 14) {
-              e.carrying = e.target;
-              e.target.state = "captured";
-              e.target.captor = e;
-              e.target = null;
-              sfx("abduct");
+        } else {
+          // Seek human if planet alive
+          if (planetAlive && freeHumans.length) {
+            if (!e.target || e.target.state !== "ground") {
+              // nearest free human
+              let best = null;
+              let bestD = 1e9;
+              for (const h of freeHumans) {
+                const d = Math.abs(wrapDelta(e.x, h.x));
+                if (d < bestD) {
+                  bestD = d;
+                  best = h;
+                }
+              }
+              e.target = best;
+            }
+            if (e.target) {
+              const dx = wrapDelta(e.x, e.target.x);
+              const ty = e.target.y - 22;
+              e.vx += Math.sign(dx) * 90 * (dt / 1000);
+              e.vy += Math.sign(ty - e.y) * 70 * (dt / 1000);
+              if (Math.abs(dx) < 14 && Math.abs(e.y - ty) < 14) {
+                e.carrying = e.target;
+                e.target.state = "captured";
+                e.target.captor = e;
+                e.target = null;
+                sfx("abduct");
+              }
             }
           } else {
-            e.vx += (Math.random() - 0.5) * 30 * (dt / 1000);
-            e.vy += (Math.random() - 0.5) * 20 * (dt / 1000);
+            // Hunt ship if no humans
+            if (ship && ship.alive) {
+              const dx = wrapDelta(e.x, ship.x);
+              const dy = ship.y - e.y;
+              e.vx += Math.sign(dx) * 70 * (dt / 1000);
+              e.vy += Math.sign(dy) * 50 * (dt / 1000);
+            } else {
+              e.vx += rnd(-20, 20) * (dt / 1000);
+              e.vy += rnd(-15, 15) * (dt / 1000);
+            }
           }
-          e.vx = clamp(e.vx, -80 - wave * 2, 80 + wave * 2);
-          e.vy = clamp(e.vy, -70, 70);
+          e.vx = clamp(e.vx, -100 - wave * 3, 100 + wave * 3);
+          e.vy = clamp(e.vy, -90, 90);
           e.x = wrap(e.x + e.vx * (dt / 1000));
           e.y += e.vy * (dt / 1000);
-          const gY = groundAt(e.x) - 20;
-          if (e.y > gY) { e.y = gY; e.vy = -20; }
-          if (e.y < SCAN_H + 40) e.vy = Math.abs(e.vy);
-        }
-        // shoot occasionally at ship
-        e.shootT -= dt;
-        if (e.shootT <= 0 && ship && ship.alive) {
-          e.shootT = 1500 + Math.random() * 2500;
-          if (Math.abs(wrapDelta(e.x, ship.x)) < VW * 0.6) {
-            const dx = wrapDelta(e.x, ship.x);
-            const dy = ship.y - e.y;
-            const len = Math.hypot(dx, dy) || 1;
-            bullets.push({
-              x: e.x, y: e.y,
-              vx: (dx / len) * 180,
-              vy: (dy / len) * 180,
-              life: 2000,
-              friendly: false,
-            });
+          const gY = planetAlive ? groundAt(e.x) - 18 : GROUND_BASE;
+          if (e.y > gY) {
+            e.y = gY;
+            e.vy = -30;
           }
+          if (e.y < PLAY_TOP + 30) e.vy = Math.abs(e.vy);
+        }
+        // Shoot at ship (slow projectiles)
+        e.shootT -= dt;
+        if (e.shootT <= 0 && ship && ship.alive && Math.abs(wrapDelta(e.x, ship.x)) < VW * 0.7) {
+          e.shootT = 1400 + Math.random() * 2000 - wave * 40;
+          const dx = wrapDelta(e.x, ship.x);
+          const dy = ship.y - e.y;
+          const len = Math.hypot(dx, dy) || 1;
+          mines.push({
+            // reuse mines array for enemy shots with flag
+            x: e.x,
+            y: e.y,
+            vx: (dx / len) * 160,
+            vy: (dy / len) * 160,
+            life: 2500,
+            shot: true,
+          });
         }
       } else if (e.type === "mutant") {
-        // aggressive chase
+        // Aggressive pursuit — faster than landers
         if (ship && ship.alive) {
           const dx = wrapDelta(e.x, ship.x);
           const dy = ship.y - e.y;
-          e.vx += Math.sign(dx) * 120 * (dt / 1000);
-          e.vy += Math.sign(dy) * 100 * (dt / 1000);
+          e.vx += Math.sign(dx) * 200 * (dt / 1000);
+          e.vy += Math.sign(dy) * 170 * (dt / 1000);
+          // lead slightly
+          e.vx += (ship.vx * 0.02);
         }
-        e.vx = clamp(e.vx, -160, 160);
-        e.vy = clamp(e.vy, -140, 140);
+        e.vx = clamp(e.vx, -220 - wave * 4, 220 + wave * 4);
+        e.vy = clamp(e.vy, -200, 200);
         e.x = wrap(e.x + e.vx * (dt / 1000));
-        e.y = clamp(e.y + e.vy * (dt / 1000), SCAN_H + 30, GROUND_Y - 30);
+        e.y = clamp(e.y + e.vy * (dt / 1000), PLAY_TOP + 20, GROUND_BASE - 10);
         if (ship && ship.alive && ship.inv <= 0) {
           if (Math.abs(wrapDelta(e.x, ship.x)) < 16 && Math.abs(e.y - ship.y) < 14) killShip();
         }
+        e.shootT = (e.shootT || 600) - dt;
+        if (e.shootT <= 0 && ship && ship.alive) {
+          e.shootT = 700 + Math.random() * 500;
+          const dx = wrapDelta(e.x, ship.x);
+          const dy = ship.y - e.y;
+          const len = Math.hypot(dx, dy) || 1;
+          mines.push({
+            x: e.x,
+            y: e.y,
+            vx: (dx / len) * 220,
+            vy: (dy / len) * 220,
+            life: 1800,
+            shot: true,
+          });
+        }
       } else if (e.type === "bomber") {
         e.x = wrap(e.x + e.vx * (dt / 1000));
-        e.y += Math.sin(e.bob / 200) * 0.3;
+        e.y += Math.sin(e.bob / 180) * 0.4;
+        e.y = clamp(e.y, PLAY_TOP + 40, GROUND_BASE - 80);
         e.dropT -= dt;
         if (e.dropT <= 0) {
-          e.dropT = 1000 + Math.random() * 1800;
-          bullets.push({
-            x: e.x, y: e.y + 10,
+          e.dropT = 900 + Math.random() * 1400;
+          mines.push({
+            x: e.x,
+            y: e.y + 8,
             vx: 0,
-            vy: 90,
-            life: 3000,
-            friendly: false,
-            bomb: true,
+            vy: 0,
+            life: 12000,
+            shot: false,
+            mine: true,
           });
         }
       } else if (e.type === "pod") {
         e.x = wrap(e.x + e.vx * (dt / 1000));
         e.y += e.vy * (dt / 1000);
-        if (e.y < SCAN_H + 40 || e.y > GROUND_Y - 40) e.vy *= -1;
+        if (e.y < PLAY_TOP + 40 || e.y > GROUND_BASE - 40) e.vy *= -1;
+        // slow drift toward ship
+        if (ship && ship.alive) {
+          e.vx += Math.sign(wrapDelta(e.x, ship.x)) * 10 * (dt / 1000);
+        }
+        e.vx = clamp(e.vx, -60, 60);
       } else if (e.type === "swarmer") {
-        e.life -= dt;
-        if (e.life <= 0) { e.dead = true; continue; }
+        e.life = (e.life || 15000) - dt;
+        if (e.life <= 0) {
+          e.dead = true;
+          continue;
+        }
         if (ship && ship.alive) {
           const dx = wrapDelta(e.x, ship.x);
           const dy = ship.y - e.y;
           const len = Math.hypot(dx, dy) || 1;
-          e.vx += (dx / len) * 200 * (dt / 1000);
-          e.vy += (dy / len) * 200 * (dt / 1000);
+          e.vx += (dx / len) * 280 * (dt / 1000);
+          e.vy += (dy / len) * 280 * (dt / 1000);
         }
-        e.vx = clamp(e.vx, -200, 200);
-        e.vy = clamp(e.vy, -200, 200);
+        e.vx = clamp(e.vx, -260, 260);
+        e.vy = clamp(e.vy, -260, 260);
         e.x = wrap(e.x + e.vx * (dt / 1000));
-        e.y = clamp(e.y + e.vy * (dt / 1000), SCAN_H + 25, GROUND_Y - 20);
+        e.y = clamp(e.y + e.vy * (dt / 1000), PLAY_TOP + 20, GROUND_BASE - 12);
         if (ship && ship.alive && ship.inv <= 0) {
           if (Math.abs(wrapDelta(e.x, ship.x)) < 12 && Math.abs(e.y - ship.y) < 12) killShip();
         }
       } else if (e.type === "baiter") {
+        // Fastest pursuit craft — punishes stalling
         if (ship && ship.alive) {
           const dx = wrapDelta(e.x, ship.x);
           const dy = ship.y - e.y;
-          e.vx += Math.sign(dx) * 200 * (dt / 1000);
-          e.vy += Math.sign(dy) * 180 * (dt / 1000);
+          e.vx += Math.sign(dx) * 320 * (dt / 1000);
+          e.vy += Math.sign(dy) * 280 * (dt / 1000);
         }
-        e.vx = clamp(e.vx, -240, 240);
-        e.vy = clamp(e.vy, -220, 220);
+        e.vx = clamp(e.vx, -340, 340);
+        e.vy = clamp(e.vy, -300, 300);
         e.x = wrap(e.x + e.vx * (dt / 1000));
-        e.y = clamp(e.y + e.vy * (dt / 1000), SCAN_H + 25, GROUND_Y - 25);
-        e.shootT = (e.shootT || 800) - dt;
+        e.y = clamp(e.y + e.vy * (dt / 1000), PLAY_TOP + 20, GROUND_BASE - 12);
+        e.shootT = (e.shootT || 400) - dt;
         if (e.shootT <= 0 && ship && ship.alive) {
-          e.shootT = 600;
+          e.shootT = 450;
           const dx = wrapDelta(e.x, ship.x);
           const dy = ship.y - e.y;
           const len = Math.hypot(dx, dy) || 1;
-          bullets.push({
-            x: e.x, y: e.y,
-            vx: (dx / len) * 260,
-            vy: (dy / len) * 260,
-            life: 1500,
-            friendly: false,
+          mines.push({
+            x: e.x,
+            y: e.y,
+            vx: (dx / len) * 280,
+            vy: (dy / len) * 280,
+            life: 1400,
+            shot: true,
           });
         }
         if (ship && ship.alive && ship.inv <= 0) {
-          if (Math.abs(wrapDelta(e.x, ship.x)) < 14 && Math.abs(e.y - ship.y) < 12) killShip();
+          if (Math.abs(wrapDelta(e.x, ship.x)) < 15 && Math.abs(e.y - ship.y) < 13) killShip();
+        }
+      }
+
+      // Collide landers/bombers/pods with ship
+      if (
+        ship &&
+        ship.alive &&
+        ship.inv <= 0 &&
+        (e.type === "lander" || e.type === "bomber" || e.type === "pod")
+      ) {
+        if (Math.abs(wrapDelta(e.x, ship.x)) < 16 && Math.abs(e.y - ship.y) < 14) {
+          killEnemy(e, false);
+          killShip();
         }
       }
     }
 
     enemies = enemies.filter((e) => !e.dead);
 
-    // Wave clear?
-    if (state === "play" && enemies.length === 0) {
+    // Wave clear when no enemies and spawn queue empty
+    if (
+      state === "play" &&
+      enemies.length === 0 &&
+      landerSpawnQueue.length === 0
+    ) {
       state = "clear";
-      clearT = 2000;
+      clearT = 2200;
       sfx("wave");
+      showOV("ATTACK WAVE " + wave, "COMPLETED", "");
     }
 
-    // Baiter spawn if taking too long
+    // Baiter if taking too long
     if (state === "play") {
       baiterTimer -= dt;
       if (baiterTimer <= 0) {
-        baiterTimer = 15000;
+        baiterTimer = 12000 - Math.min(5000, wave * 400);
         enemies.push({
           type: "baiter",
-          x: wrap(ship.x + WORLD * 0.4),
-          y: 100 + Math.random() * 200,
-          vx: 0, vy: 0,
+          x: wrap(ship ? ship.x + WORLD * 0.35 : Math.random() * WORLD),
+          y: PLAY_TOP + 50 + Math.random() * 150,
+          vx: 0,
+          vy: 0,
           hp: 1,
           bob: 0,
-          shootT: 500,
+          shootT: 300,
+          materialize: 200,
         });
         sfx("alert");
       }
     }
   }
 
+  function updateMines(dt) {
+    for (const m of mines) {
+      if (m.shot) {
+        m.x = wrap(m.x + m.vx * (dt / 1000));
+        m.y += m.vy * (dt / 1000);
+        m.life -= dt;
+      } else {
+        // static mine drifts slowly
+        m.life -= dt;
+      }
+      if (ship && ship.alive && ship.inv <= 0) {
+        if (Math.abs(wrapDelta(m.x, ship.x)) < 12 && Math.abs(m.y - ship.y) < 12) {
+          m.life = 0;
+          killShip();
+        }
+      }
+    }
+    mines = mines.filter(
+      (m) => m.life > 0 && m.y > PLAY_TOP - 20 && m.y < VH + 40
+    );
+  }
+
   function updateParticles(dt) {
     for (const p of particles) {
-      p.x += p.vx * (dt / 1000);
+      p.x = wrap(p.x + p.vx * (dt / 1000));
       p.y += p.vy * (dt / 1000);
       p.life -= dt;
+      p.vx *= 0.98;
+      p.vy *= 0.98;
     }
     particles = particles.filter((p) => p.life > 0);
   }
 
   function update(dt) {
-    time += dt;
-    if (state === "title" || state === "pause" || state === "over") {
-      setThrust(false);
-      return;
-    }
+    if (fireCD > 0) fireCD -= dt;
+    if (flashT > 0) flashT -= dt;
+
     if (state === "ready") {
       readyT -= dt;
-      if (readyT <= 0) { state = "play"; hideOV(); }
+      if (readyT <= 0) {
+        state = "play";
+        hideOV();
+      }
       return;
     }
+
     if (state === "die") {
       dieT -= dt;
       updateParticles(dt);
       if (dieT <= 0) {
         if (lives <= 0) {
           state = "over";
-          showOV("GAME OVER", isTouchPrimary() ? "TAP TO RESTART" : "PRESS SPACE", "gameover");
-          return;
+          setThrust(false);
+          showOV("GAME OVER", "SCORE " + pad(score), "PRESS SPACE OR TAP");
+        } else {
+          spawnShip(ship ? ship.x : undefined);
+          state = "ready";
+          readyT = 1200;
+          showOV("GET READY", "SHIPS LEFT " + lives, "");
         }
-        spawnShip();
-        ship.inv = 2000;
-        state = "ready";
-        readyT = 1200;
-        showOV("READY!", "", "ready");
       }
       return;
     }
+
     if (state === "clear") {
       clearT -= dt;
-      if (clearT <= 0) beginWave(wave + 1);
+      updateParticles(dt);
+      if (clearT <= 0) {
+        // Restore humans for next wave if planet still alive
+        beginWave(wave + 1);
+      }
       return;
     }
 
-    // play
-    fireCD -= dt;
-    if (flashT > 0) flashT -= dt;
-    if (fireHeld || keys["Space"] || keys[" "]) fireLaser();
+    if (state === "planet") {
+      planetT -= dt;
+      updateParticles(dt);
+      if (planetT <= 0) {
+        state = "play";
+        hideOV();
+      }
+      return;
+    }
+
+    if (state !== "play") return;
 
     updateShip(dt);
-    updateBullets(dt);
+    updateLasers(dt);
     updateHumans(dt);
     updateEnemies(dt);
+    updateMines(dt);
     updateParticles(dt);
-
-    // all humans gone → still can finish enemies
-    const humansOk = humans.some((h) => h.state === "ground" || h.state === "captured" || h.state === "falling");
-    if (!humansOk && enemies.length === 0 && state === "play") {
-      state = "clear";
-      clearT = 2000;
-    }
+    hud();
   }
 
-  // ── Draw ─────────────────────────────────────────────────────────────────
+  // ── Drawing ──────────────────────────────────────────────────────────────
   function drawScanner() {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, VW, SCAN_H);
     ctx.strokeStyle = "#0a0";
+    ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, VW - 1, SCAN_H - 1);
 
-    const scaleX = VW / WORLD;
-    // terrain
+    // Mid line
+    ctx.strokeStyle = "#040";
     ctx.beginPath();
-    ctx.strokeStyle = "#060";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < terrain.length; i++) {
-      const t = terrain[i];
-      const sx = t.x * scaleX;
-      const sy = SCAN_H - 4 - t.h * 0.25;
-      if (i === 0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
-    }
+    ctx.moveTo(0, SCAN_H / 2);
+    ctx.lineTo(VW, SCAN_H / 2);
     ctx.stroke();
 
-    // humans
+    const scaleX = VW / WORLD;
+
+    // Terrain silhouette
+    if (planetAlive) {
+      ctx.beginPath();
+      ctx.strokeStyle = "#060";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < terrain.length; i++) {
+        const t = terrain[i];
+        const sx = t.x * scaleX;
+        const sy = SCAN_H - 6 - t.h * 0.22;
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+    }
+
+    // Humans
     ctx.fillStyle = "#ff0";
     for (const h of humans) {
       if (h.state === "dead" || h.state === "gone") continue;
-      ctx.fillRect(h.x * scaleX - 1, SCAN_H - 8, 2, 3);
+      const hy =
+        h.state === "ground"
+          ? SCAN_H - 8
+          : 6 + (h.y / VH) * (SCAN_H - 14);
+      ctx.fillRect(h.x * scaleX - 1, hy, 2, 3);
     }
-    // enemies
+
+    // Enemies
     for (const e of enemies) {
       if (e.dead) continue;
-      ctx.fillStyle = e.type === "mutant" ? "#f0f" : e.type === "baiter" ? "#f00" : "#0f0";
-      ctx.fillRect(e.x * scaleX - 1.5, 8 + (e.y / VH) * (SCAN_H - 16), 3, 3);
+      if (e.type === "mutant") ctx.fillStyle = "#f0f";
+      else if (e.type === "baiter") ctx.fillStyle = "#f00";
+      else if (e.type === "bomber") ctx.fillStyle = "#0ff";
+      else if (e.type === "pod" || e.type === "swarmer") ctx.fillStyle = "#0f8";
+      else ctx.fillStyle = "#0f0";
+      const ey = 6 + (e.y / VH) * (SCAN_H - 14);
+      ctx.fillRect(e.x * scaleX - 1.5, ey, 3, 3);
     }
-    // ship
+
+    // Mines
+    ctx.fillStyle = "#ff0";
+    for (const m of mines) {
+      if (!m.mine) continue;
+      ctx.fillRect(m.x * scaleX - 1, 6 + (m.y / VH) * (SCAN_H - 14), 2, 2);
+    }
+
+    // Ship
     if (ship && ship.alive) {
       ctx.fillStyle = "#fff";
-      ctx.fillRect(ship.x * scaleX - 2, 6 + (ship.y / VH) * (SCAN_H - 14), 4, 3);
+      const sy = 6 + (ship.y / VH) * (SCAN_H - 14);
+      ctx.fillRect(ship.x * scaleX - 2, sy, 4, 3);
     }
-    // view bracket
-    ctx.strokeStyle = "#0f0";
-    const vb = (camX - VW * 0.15 + WORLD) % WORLD * scaleX;
-    ctx.strokeRect(vb, 2, VW * scaleX * 0.9, SCAN_H - 4);
-  }
 
-  function drawTerrain() {
-    ctx.beginPath();
-    ctx.fillStyle = "#020";
-    let started = false;
-    // draw visible terrain segment
-    const startX = camX - VW * 0.4;
-    for (let wx = startX - 40; wx < startX + VW + 80; wx += 20) {
-      const x = screenX(wrap(wx));
-      const y = groundAt(wx);
-      if (!started) { ctx.moveTo(x, VH); ctx.lineTo(x, y); started = true; }
-      else ctx.lineTo(x, y);
+    // View bracket
+    if (ship) {
+      const shipScreen = ship.face > 0 ? VW * 0.32 : VW * 0.68;
+      const origin = ship.x - shipScreen;
+      let vb = (origin / WORLD) * VW;
+      while (vb < 0) vb += VW;
+      while (vb > VW) vb -= VW;
+      ctx.strokeStyle = "#0f0";
+      ctx.lineWidth = 1;
+      const viewW = Math.max(8, (VW / WORLD) * VW);
+      ctx.strokeRect(vb, 2, viewW, SCAN_H - 4);
     }
-    ctx.lineTo(screenX(wrap(startX + VW + 80)), VH);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.strokeStyle = "#0f0";
-    ctx.lineWidth = 2;
-    ctx.shadowColor = "#0f0";
-    ctx.shadowBlur = 4;
-    ctx.beginPath();
-    started = false;
-    for (let wx = startX - 40; wx < startX + VW + 80; wx += 20) {
-      const x = screenX(wrap(wx));
-      const y = groundAt(wx);
-      if (!started) { ctx.moveTo(x, y); started = true; }
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-    ctx.shadowBlur = 0;
   }
 
   function drawStars() {
     for (const s of stars) {
       const x = screenX(s.x);
-      if (x < -10 || x > VW + 10) continue;
-      ctx.fillStyle = `rgba(0,255,100,${s.b * 0.5})`;
-      ctx.fillRect(x, s.y, 2, 2);
+      if (x < -4 || x > VW + 4) continue;
+      ctx.fillStyle = `rgba(180,255,180,${s.b * 0.55})`;
+      ctx.fillRect(x, s.y, s.s, s.s);
     }
+  }
+
+  function drawTerrain() {
+    if (!planetAlive) {
+      // Destroyed planet — faint debris line
+      ctx.strokeStyle = "#030";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, GROUND_BASE + 10);
+      ctx.lineTo(VW, GROUND_BASE + 10);
+      ctx.stroke();
+      return;
+    }
+
+    const origin = ship && ship.alive
+      ? ship.x - (ship.face > 0 ? VW * 0.32 : VW * 0.68)
+      : camX - VW * 0.4;
+
+    // Fill
+    ctx.beginPath();
+    ctx.fillStyle = "#010";
+    let started = false;
+    for (let wx = origin - 40; wx < origin + VW + 60; wx += 12) {
+      const x = screenX(wrap(wx));
+      const y = groundAt(wx);
+      if (!started) {
+        ctx.moveTo(x, VH);
+        ctx.lineTo(x, y);
+        started = true;
+      } else ctx.lineTo(x, y);
+    }
+    ctx.lineTo(VW + 20, VH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Colored mountain ridge (Williams multi-hue feel)
+    const colors = ["#0f0", "#0c0", "#080", "#0a4"];
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "#0f0";
+    ctx.shadowBlur = 3;
+    ctx.beginPath();
+    started = false;
+    let ci = 0;
+    for (let wx = origin - 40; wx < origin + VW + 60; wx += 12) {
+      const x = screenX(wrap(wx));
+      const y = groundAt(wx);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else ctx.lineTo(x, y);
+      if (((wx / 12) | 0) % 20 === 0) {
+        ctx.strokeStyle = colors[ci++ % colors.length];
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+      }
+    }
+    ctx.strokeStyle = "#0f0";
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
   function drawShip() {
     if (!ship || !ship.alive) return;
-    if (ship.inv > 0 && Math.floor(ship.inv / 80) % 2 === 0) return;
+    if (ship.inv > 0 && Math.floor(ship.inv / 70) % 2 === 0) return;
     const x = screenX(ship.x);
     const y = ship.y;
     const f = ship.face;
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(f, 1);
-    // hull
-    ctx.fillStyle = "#0f0";
+
+    // Williams-like defender ship: pointed nose, rear pods
+    ctx.fillStyle = "#cfc";
     ctx.shadowColor = "#0f0";
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.moveTo(16, 0);
-    ctx.lineTo(-12, -8);
-    ctx.lineTo(-6, 0);
-    ctx.lineTo(-12, 8);
+    ctx.moveTo(18, 0);
+    ctx.lineTo(-4, -7);
+    ctx.lineTo(-10, -3);
+    ctx.lineTo(-14, -8);
+    ctx.lineTo(-16, -2);
+    ctx.lineTo(-16, 2);
+    ctx.lineTo(-14, 8);
+    ctx.lineTo(-10, 3);
+    ctx.lineTo(-4, 7);
     ctx.closePath();
     ctx.fill();
-    // cockpit
-    ctx.fillStyle = "#8f8";
-    ctx.fillRect(-2, -3, 8, 6);
-    // thrust flame
-    if (thrustHeld || keys["ShiftLeft"] || keys["ShiftRight"] || keys["KeyZ"] || keys["z"]) {
+
+    // Cockpit
+    ctx.fillStyle = "#0f0";
+    ctx.fillRect(2, -2, 6, 4);
+
+    // Thrust
+    const thr =
+      thrustHeld ||
+      keys["ShiftLeft"] ||
+      keys["ShiftRight"] ||
+      keys["KeyZ"] ||
+      keys["z"];
+    if (thr) {
+      const flick = Math.random() * 10;
       ctx.fillStyle = "#ff0";
       ctx.beginPath();
-      ctx.moveTo(-12, -4);
-      ctx.lineTo(-22 - Math.random() * 8, 0);
-      ctx.lineTo(-12, 4);
+      ctx.moveTo(-16, -3);
+      ctx.lineTo(-26 - flick, 0);
+      ctx.lineTo(-16, 3);
       ctx.fill();
       ctx.fillStyle = "#f80";
       ctx.beginPath();
-      ctx.moveTo(-12, -2);
-      ctx.lineTo(-18 - Math.random() * 4, 0);
-      ctx.lineTo(-12, 2);
+      ctx.moveTo(-16, -1.5);
+      ctx.lineTo(-22 - flick * 0.5, 0);
+      ctx.lineTo(-16, 1.5);
       ctx.fill();
     }
+
+    // Materialize flash
+    if (materializeT > 0) {
+      ctx.strokeStyle = `rgba(0,255,255,${materializeT / 400})`;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-20, -12, 40, 24);
+    }
+
     ctx.shadowBlur = 0;
     ctx.restore();
   }
@@ -981,44 +1433,52 @@
     const y = h.y;
     ctx.fillStyle = "#ff0";
     ctx.shadowColor = "#ff0";
-    ctx.shadowBlur = 4;
-    // head
-    ctx.beginPath();
-    ctx.arc(x, y - 8, 3, 0, Math.PI * 2);
-    ctx.fill();
-    // body
-    ctx.fillRect(x - 2, y - 5, 4, 7);
-    // legs
-    const leg = Math.sin(h.walk / 100) * 2;
-    ctx.fillRect(x - 3, y + 2, 2, 4 + leg);
-    ctx.fillRect(x + 1, y + 2, 2, 4 - leg);
+    ctx.shadowBlur = 3;
+    // Head
+    ctx.fillRect(x - 2, y - 10, 4, 4);
+    // Body
+    ctx.fillRect(x - 2, y - 6, 4, 7);
+    // Arms
+    ctx.fillRect(x - 5, y - 5, 3, 2);
+    ctx.fillRect(x + 2, y - 5, 3, 2);
+    // Legs
+    const leg = Math.sin(h.walk / 90) * 2;
+    ctx.fillRect(x - 3, y + 1, 2, 5 + leg);
+    ctx.fillRect(x + 1, y + 1, 2, 5 - leg);
     ctx.shadowBlur = 0;
   }
 
   function drawEnemy(e) {
     if (e.dead) return;
     const x = screenX(e.x);
-    if (x < -40 || x > VW + 40) return;
-    const y = e.y + Math.sin(e.bob / 150) * 2;
-    ctx.shadowBlur = 6;
+    if (x < -50 || x > VW + 50) return;
+    let y = e.y + Math.sin(e.bob / 140) * 2;
+    if (e.materialize > 0 && Math.floor(e.materialize / 40) % 2 === 0) {
+      // blink in
+      ctx.globalAlpha = 0.5;
+    }
+    ctx.shadowBlur = 5;
 
     if (e.type === "lander") {
+      // Classic lander: dome + body + legs
       ctx.fillStyle = "#0f0";
       ctx.shadowColor = "#0f0";
-      // saucer
       ctx.beginPath();
-      ctx.ellipse(x, y, 14, 6, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, y, 13, 5, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#8f8";
       ctx.beginPath();
-      ctx.arc(x, y - 4, 6, Math.PI, 0);
+      ctx.arc(x, y - 5, 7, Math.PI, 0);
       ctx.fill();
-      // legs
       ctx.strokeStyle = "#0f0";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(x - 8, y + 4); ctx.lineTo(x - 12, y + 12);
-      ctx.moveTo(x + 8, y + 4); ctx.lineTo(x + 12, y + 12);
+      ctx.moveTo(x - 8, y + 3);
+      ctx.lineTo(x - 12, y + 12);
+      ctx.moveTo(x + 8, y + 3);
+      ctx.lineTo(x + 12, y + 12);
+      ctx.moveTo(x, y + 4);
+      ctx.lineTo(x, y + 11);
       ctx.stroke();
       if (e.carrying) {
         ctx.strokeStyle = "#ff0";
@@ -1028,66 +1488,120 @@
         ctx.stroke();
       }
     } else if (e.type === "mutant") {
+      // Angular mutant
       ctx.fillStyle = "#f0f";
       ctx.shadowColor = "#f0f";
       ctx.beginPath();
-      ctx.moveTo(x, y - 10);
-      ctx.lineTo(x + 10, y + 8);
-      ctx.lineTo(x - 10, y + 8);
+      ctx.moveTo(x, y - 11);
+      ctx.lineTo(x + 11, y + 2);
+      ctx.lineTo(x + 6, y + 10);
+      ctx.lineTo(x - 6, y + 10);
+      ctx.lineTo(x - 11, y + 2);
       ctx.closePath();
       ctx.fill();
       ctx.fillStyle = "#fff";
-      ctx.fillRect(x - 3, y - 2, 2, 2);
-      ctx.fillRect(x + 1, y - 2, 2, 2);
+      ctx.fillRect(x - 4, y - 2, 3, 3);
+      ctx.fillRect(x + 1, y - 2, 3, 3);
     } else if (e.type === "bomber") {
-      ctx.fillStyle = "#0f0";
-      ctx.shadowColor = "#0f0";
-      ctx.fillRect(x - 14, y - 5, 28, 10);
-      ctx.fillRect(x - 18, y - 2, 4, 4);
-      ctx.fillRect(x + 14, y - 2, 4, 4);
-    } else if (e.type === "pod") {
-      ctx.strokeStyle = "#0f0";
-      ctx.shadowColor = "#0f0";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x - 12, y - 12, 24, 24);
+      ctx.fillStyle = "#0ff";
+      ctx.shadowColor = "#0ff";
+      // diamond / brick bomber
       ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.stroke();
-    } else if (e.type === "swarmer") {
-      ctx.fillStyle = "#0f0";
-      ctx.shadowColor = "#0f0";
+      ctx.moveTo(x - 16, y);
+      ctx.lineTo(x - 8, y - 7);
+      ctx.lineTo(x + 8, y - 7);
+      ctx.lineTo(x + 16, y);
+      ctx.lineTo(x + 8, y + 7);
+      ctx.lineTo(x - 8, y + 7);
+      ctx.closePath();
+      ctx.fill();
+    } else if (e.type === "pod") {
+      ctx.strokeStyle = "#0f8";
+      ctx.shadowColor = "#0f8";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - 11, y - 11, 22, 22);
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeRect(x - 4, y - 4, 8, 8);
+    } else if (e.type === "swarmer") {
+      ctx.fillStyle = "#0f8";
+      ctx.shadowColor = "#0f8";
+      ctx.beginPath();
+      ctx.moveTo(x, y - 6);
+      ctx.lineTo(x + 6, y);
+      ctx.lineTo(x, y + 6);
+      ctx.lineTo(x - 6, y);
+      ctx.closePath();
       ctx.fill();
     } else if (e.type === "baiter") {
       ctx.fillStyle = "#f44";
       ctx.shadowColor = "#f00";
       ctx.beginPath();
-      ctx.ellipse(x, y, 16, 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, y, 17, 6, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#faa";
-      ctx.fillRect(x - 4, y - 3, 8, 6);
+      ctx.fillRect(x - 5, y - 3, 10, 6);
+      // fins
+      ctx.fillStyle = "#f44";
+      ctx.fillRect(x - 18, y - 1, 5, 2);
+      ctx.fillRect(x + 13, y - 1, 5, 2);
     }
+
     ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
   }
 
-  function drawBullets() {
-    for (const b of bullets) {
-      const x = screenX(b.x);
-      if (x < -20 || x > VW + 20) continue;
-      if (b.friendly) {
-        ctx.fillStyle = "#0f0";
-        ctx.shadowColor = "#0f0";
-        ctx.shadowBlur = 6;
-        ctx.fillRect(x - 6, b.y - 1, 12, 2);
-      } else if (b.bomb) {
-        ctx.fillStyle = "#ff0";
-        ctx.beginPath();
-        ctx.arc(x, b.y, 3, 0, Math.PI * 2);
-        ctx.fill();
+  function drawLasers() {
+    for (const L of lasers) {
+      const x0 = screenX(L.x);
+      const x1 = screenX(wrap(L.x + L.face * L.len));
+      // Draw as long horizontal beam
+      const alpha = clamp(L.life / 70, 0, 1);
+      ctx.strokeStyle = `rgba(180,255,180,${0.9 * alpha})`;
+      ctx.shadowColor = "#0f0";
+      ctx.shadowBlur = 8;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      // Handle wrap: draw from ship-relative
+      if (L.face > 0) {
+        ctx.moveTo(x0, L.y);
+        ctx.lineTo(x0 + L.len, L.y);
       } else {
-        ctx.fillStyle = "#f44";
-        ctx.fillRect(x - 2, b.y - 2, 4, 4);
+        ctx.moveTo(x0, L.y);
+        ctx.lineTo(x0 - L.len, L.y);
+      }
+      ctx.stroke();
+      // Core
+      ctx.strokeStyle = `rgba(255,255,255,${0.7 * alpha})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (L.face > 0) {
+        ctx.moveTo(x0, L.y);
+        ctx.lineTo(x0 + L.len * 0.85, L.y);
+      } else {
+        ctx.moveTo(x0, L.y);
+        ctx.lineTo(x0 - L.len * 0.85, L.y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function drawMines() {
+    for (const m of mines) {
+      const x = screenX(m.x);
+      if (x < -10 || x > VW + 10) continue;
+      if (m.mine) {
+        ctx.fillStyle = "#ff0";
+        ctx.shadowColor = "#ff0";
+        ctx.shadowBlur = 4;
+        // Plus-shaped mine
+        ctx.fillRect(x - 3, m.y - 1, 6, 2);
+        ctx.fillRect(x - 1, m.y - 3, 2, 6);
+      } else {
+        ctx.fillStyle = "#f66";
+        ctx.fillRect(x - 2, m.y - 2, 4, 4);
       }
       ctx.shadowBlur = 0;
     }
@@ -1098,7 +1612,7 @@
       const x = screenX(p.x);
       ctx.globalAlpha = clamp(p.life / 400, 0, 1);
       ctx.fillStyle = p.color;
-      ctx.fillRect(x, p.y, 2, 2);
+      ctx.fillRect(x, p.y, p.size || 2, p.size || 2);
     }
     ctx.globalAlpha = 1;
   }
@@ -1108,7 +1622,7 @@
     ctx.fillRect(0, 0, VW, VH);
 
     if (flashT > 0) {
-      ctx.fillStyle = `rgba(0,255,0,${0.15 * (flashT / 200)})`;
+      ctx.fillStyle = `rgba(200,255,200,${0.2 * (flashT / 280)})`;
       ctx.fillRect(0, SCAN_H, VW, VH - SCAN_H);
     }
 
@@ -1116,40 +1630,29 @@
     drawTerrain();
     for (const h of humans) drawHuman(h);
     for (const e of enemies) drawEnemy(e);
-    drawBullets();
+    drawMines();
+    drawLasers();
     drawParticles();
     drawShip();
-    drawScanner();
+    drawScanner(); // on top so radar is always readable
 
-    // bottom status line
+    // Scanner separator
     ctx.fillStyle = "#0a0";
-    ctx.font = "10px 'Press Start 2P', monospace";
-    ctx.textAlign = "left";
-    if (state === "ready") {
-      ctx.fillStyle = "#0f0";
-      ctx.font = "16px 'Press Start 2P', monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("PLAYER ONE", VW / 2, VH * 0.45);
-    }
-    if (state === "clear") {
-      ctx.fillStyle = "#0f0";
-      ctx.font = "14px 'Press Start 2P', monospace";
-      ctx.textAlign = "center";
-      ctx.fillText("ATTACK WAVE " + wave + " COMPLETED", VW / 2, VH * 0.45);
-    }
+    ctx.fillRect(0, SCAN_H - 1, VW, 2);
   }
 
   // ── Loop ─────────────────────────────────────────────────────────────────
+  let last = 0;
   function tick(ts) {
-    if (!prev) prev = ts;
-    let dt = ts - prev;
-    prev = ts;
-    if (dt > 40) dt = 40;
-    if (dt < 0) dt = 0;
+    if (!last) last = ts;
+    let dt = ts - last;
+    last = ts;
+    dt = Math.min(dt, 40);
     update(dt);
     render();
     requestAnimationFrame(tick);
   }
+  requestAnimationFrame(tick);
 
   // ── Input ────────────────────────────────────────────────────────────────
   function togglePauseOrStart() {
@@ -1158,126 +1661,207 @@
     else if (state === "play") {
       state = "pause";
       setThrust(false);
-      showOV("PAUSED", isTouchPrimary() ? "TAP TO RESUME" : "SPACE TO RESUME", "paused");
+      showOV("PAUSED", "PRESS SPACE OR TAP", "");
     } else if (state === "pause") {
       state = "play";
       hideOV();
     }
   }
+
+  // Fix: state pause support
+  // (update ignores pause)
+
   function toggleMute() {
     muted = !muted;
     if (muted) setThrust(false);
-    const btn = document.getElementById("btn-mute");
-    if (btn) {
-      btn.textContent = muted ? "✕" : "♪";
-      btn.classList.toggle("active", muted);
-    }
   }
 
-  window.addEventListener("keydown", (e) => {
-    keys[e.code] = true;
-    keys[e.key] = true;
-    if (e.key === "m" || e.key === "M") { toggleMute(); return; }
-    if (e.key === "p" || e.key === "P" || e.key === "Escape") {
-      e.preventDefault();
-      if (state === "play" || state === "pause") togglePauseOrStart();
-      return;
-    }
-    if (e.code === "Space" || e.key === " ") {
-      e.preventDefault();
-      if (state === "title" || state === "over" || state === "pause") togglePauseOrStart();
-      else fireHeld = true;
-      return;
-    }
-    if (e.key === "b" || e.key === "B") { e.preventDefault(); smartBomb(); return; }
-    if (e.key === "h" || e.key === "H") { e.preventDefault(); hyperspace(); return; }
-    if (e.code === "ShiftLeft" || e.code === "ShiftRight" || e.key === "z" || e.key === "Z") {
-      thrustHeld = true;
-    }
-  }, { passive: false });
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      keys[e.code] = true;
+      keys[e.key] = true;
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+        e.preventDefault();
+      }
+      unlockAudio();
+
+      if (e.key === "m" || e.key === "M") {
+        toggleMute();
+        return;
+      }
+      if (e.key === "p" || e.key === "P" || e.key === "Escape") {
+        e.preventDefault();
+        if (state === "play") {
+          state = "pause";
+          setThrust(false);
+          showOV("PAUSED", "PRESS P OR SPACE", "");
+        } else if (state === "pause") {
+          state = "play";
+          hideOV();
+        }
+        return;
+      }
+      if (e.code === "Space" || e.key === " ") {
+        e.preventDefault();
+        if (state === "title" || state === "over") beginGame();
+        else if (state === "pause") {
+          state = "play";
+          hideOV();
+        } else fireHeld = true;
+        return;
+      }
+      if (e.key === "b" || e.key === "B") {
+        e.preventDefault();
+        smartBomb();
+        return;
+      }
+      if (e.key === "h" || e.key === "H") {
+        e.preventDefault();
+        hyperspace();
+        return;
+      }
+    },
+    { passive: false }
+  );
 
   window.addEventListener("keyup", (e) => {
     keys[e.code] = false;
     keys[e.key] = false;
     if (e.code === "Space" || e.key === " ") fireHeld = false;
-    if (e.code === "ShiftLeft" || e.code === "ShiftRight" || e.key === "z" || e.key === "Z") {
-      thrustHeld = false;
-      // check other thrust keys
-      if (!(keys["ShiftLeft"] || keys["ShiftRight"] || keys["z"] || keys["Z"] || keys["KeyZ"])) {
-        setThrust(false);
-      }
-    }
   });
+
+  // Touch controls
+  function bindHold(id, onDown, onUp) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const down = (ev) => {
+      ev.preventDefault();
+      unlockAudio();
+      onDown();
+    };
+    const up = (ev) => {
+      ev.preventDefault();
+      onUp();
+    };
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointerleave", up);
+    el.addEventListener("pointercancel", up);
+  }
+
+  bindHold(
+    "btn-up",
+    () => {
+      keys._up = true;
+    },
+    () => {
+      keys._up = false;
+    }
+  );
+  bindHold(
+    "btn-down",
+    () => {
+      keys._down = true;
+    },
+    () => {
+      keys._down = false;
+    }
+  );
+  bindHold(
+    "btn-thrust",
+    () => {
+      thrustHeld = true;
+    },
+    () => {
+      thrustHeld = false;
+    }
+  );
+  bindHold(
+    "btn-reverse",
+    () => {
+      keys._rev = true;
+      if (ship) ship.face = -1;
+    },
+    () => {
+      keys._rev = false;
+    }
+  );
+  bindHold(
+    "btn-fire",
+    () => {
+      fireHeld = true;
+      if (state === "title" || state === "over") beginGame();
+      else if (state === "pause") {
+        state = "play";
+        hideOV();
+      }
+    },
+    () => {
+      fireHeld = false;
+    }
+  );
+  bindHold(
+    "btn-bomb",
+    () => {
+      smartBomb();
+    },
+    () => {}
+  );
+  bindHold(
+    "btn-hyper",
+    () => {
+      hyperspace();
+    },
+    () => {}
+  );
+  bindHold(
+    "btn-pause",
+    () => {
+      if (state === "play") {
+        state = "pause";
+        setThrust(false);
+        showOV("PAUSED", "TAP FIRE TO RESUME", "");
+      } else if (state === "pause") {
+        state = "play";
+        hideOV();
+      } else if (state === "title" || state === "over") beginGame();
+    },
+    () => {}
+  );
+  bindHold(
+    "btn-mute",
+    () => {
+      toggleMute();
+    },
+    () => {}
+  );
+
+  // Touch: FWD faces right (REV already faces left)
+  bindHold(
+    "btn-forward",
+    () => {
+      if (ship) ship.face = 1;
+      keys._fwd = true;
+    },
+    () => {
+      keys._fwd = false;
+    }
+  );
 
   canvas.tabIndex = 0;
   canvas.style.outline = "none";
-  canvas.addEventListener("pointerdown", () => {
-    unlockAudio();
-    if (state === "title" || state === "over") beginGame();
-    else if (state === "pause") { state = "play"; hideOV(); }
-  });
-
   overlay.style.pointerEvents = "auto";
   overlay.addEventListener("click", () => {
     unlockAudio();
     if (state === "title" || state === "over") beginGame();
-    else if (state === "pause") { state = "play"; hideOV(); }
+    else if (state === "pause") {
+      state = "play";
+      hideOV();
+    }
   });
 
-  function bindHold(id, onDown, onUp) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const down = (e) => {
-      e.preventDefault(); e.stopPropagation();
-      el.classList.add("active");
-      el.setPointerCapture?.(e.pointerId);
-      unlockAudio();
-      onDown();
-    };
-    const up = (e) => {
-      if (!el.classList.contains("active")) return;
-      el.classList.remove("active");
-      onUp();
-    };
-    el.addEventListener("pointerdown", down, { passive: false });
-    el.addEventListener("pointerup", up, { passive: false });
-    el.addEventListener("pointercancel", up, { passive: false });
-    el.addEventListener("lostpointercapture", up, { passive: false });
-  }
-
-  bindHold("btn-up", () => { keys._up = true; }, () => { keys._up = false; });
-  bindHold("btn-down", () => { keys._down = true; }, () => { keys._down = false; });
-  bindHold("btn-thrust", () => { thrustHeld = true; }, () => { thrustHeld = false; setThrust(false); });
-  bindHold("btn-reverse", () => {
-    keys._rev = true;
-    if (ship) ship.face *= -1;
-  }, () => { keys._rev = false; });
-  bindHold("btn-fire", () => { fireHeld = true; if (state === "title" || state === "over") beginGame(); }, () => { fireHeld = false; });
-  bindHold("btn-bomb", () => smartBomb(), () => {});
-  bindHold("btn-hyper", () => hyperspace(), () => {});
-  bindHold("btn-pause", () => togglePauseOrStart(), () => {});
-  bindHold("btn-mute", () => toggleMute(), () => {});
-
-  document.getElementById("game-wrapper").addEventListener("touchmove", (e) => {
-    e.preventDefault();
-  }, { passive: false });
-
-  // Boot
-  buildTerrain();
-  stars = [];
-  for (let i = 0; i < 80; i++) {
-    stars.push({ x: Math.random() * WORLD, y: 40 + Math.random() * 400, b: Math.random() });
-  }
-  humans = [];
-  enemies = [];
-  bullets = [];
-  particles = [];
-  ship = null;
-  $high.textContent = pad(high);
   hud();
-  $lives.innerHTML = "";
-  showOV("DEFENDER", "INSERT COIN", null);
-  state = "title";
-  prev = 0;
-  requestAnimationFrame(tick);
+  showOV("DEFENDER", "INSERT COIN", "PRESS SPACE OR TAP TO START");
+  $high.textContent = pad(high);
 })();
