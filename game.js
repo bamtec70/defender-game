@@ -15,11 +15,13 @@
     console.error("Defender: 2D context unavailable");
     return;
   }
-  // Near original aspect; scaled up for modern screens
+  // Logical playfield (game math). Display is 2× via SCALE + CSS.
   const VW = 896;
   const VH = 672;
-  canvas.width = VW;
-  canvas.height = VH;
+  const SCALE = 2;
+  canvas.width = VW * SCALE;
+  canvas.height = VH * SCALE;
+  ctx.imageSmoothingEnabled = false;
 
   const SCAN_H = 52;
   const PLAY_TOP = SCAN_H + 2;
@@ -62,7 +64,10 @@
   const $lives = document.getElementById("lives");
   const $humans = document.getElementById("humans-left");
 
-  document.documentElement.style.setProperty("--board-w", VW + "px");
+  document.documentElement.style.setProperty("--board-w", VW * SCALE + "px");
+  document.documentElement.style.setProperty("--board-h", VH * SCALE + "px");
+  document.documentElement.style.setProperty("--aspect-w", String(VW));
+  document.documentElement.style.setProperty("--aspect-h", String(VH));
 
   // ── Audio ────────────────────────────────────────────────────────────────
   let AC = null;
@@ -1528,6 +1533,9 @@
   }
 
   function render() {
+    // 2× crisp pixels; all draw code stays in logical VW×VH space
+    ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+    ctx.imageSmoothingEnabled = false;
     // Deep space black (not green tint)
     fillRect(0, 0, VW, VH, C.black);
 
