@@ -225,3 +225,74 @@ html, body {
   .mobile-btn.thrust { min-width: 96px; }
   .mobile-btn.face { min-width: 48px; }
 }
+
+/* Portrait phones: keep board + controls on screen */
+@media (orientation: portrait) and (max-width: 900px) {
+  #game-wrapper {
+    justify-content: flex-start;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+  #canvas-wrap {
+    width: min(
+      100vw - 8px,
+      calc((100dvh - 260px) * var(--aspect-w, 896) / var(--aspect-h, 672))
+    ) !important;
+  }
+  #game { max-height: calc(100dvh - 260px) !important; }
+  #hud, #footer, #mobile-controls {
+    width: min(
+      100vw - 8px,
+      calc((100dvh - 260px) * var(--aspect-w, 896) / var(--aspect-h, 672))
+    ) !important;
+  }
+  #mobile-controls {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+  }
+  .mobile-col { flex: 1 1 auto; }
+}
+
+/* Landscape phones / short height: compact chrome so playfield stays large */
+@media (orientation: landscape) and (max-height: 500px) {
+  #game-wrapper {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    max-height: 100dvh;
+    overflow: hidden;
+    padding: 2px 4px;
+    padding-left: max(4px, env(safe-area-inset-left));
+    padding-right: max(4px, env(safe-area-inset-right));
+  }
+  #hud, #footer {
+    width: min(42vw, 360px);
+    order: 1;
+  }
+  #canvas-wrap {
+    width: min(
+      56vw,
+      calc((100dvh - 16px) * var(--aspect-w, 896) / var(--aspect-h, 672)),
+      100vw - 160px
+    ) !important;
+    order: 0;
+  }
+  #game { max-height: calc(100dvh - 16px) !important; }
+  #mobile-controls {
+    display: flex !important;
+    width: min(42vw, 360px);
+    order: 2;
+    padding: 0;
+  }
+  .mobile-btn {
+    min-width: 44px;
+    height: 40px;
+    font-size: 9px;
+  }
+  .mobile-btn.fire { min-width: 52px; height: 44px; }
+  .mobile-btn.thrust { min-width: 72px; }
+  #overlay-controls { display: none; }
+}

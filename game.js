@@ -69,7 +69,7 @@
   document.documentElement.style.setProperty("--aspect-w", String(VW));
   document.documentElement.style.setProperty("--aspect-h", String(VH));
 
-  // ── Audio ────────────────────────────────────────────────────────────────
+  // ── Audio (Williams Defender–style WebAudio approximations; no ROM samples) ──
   let AC = null;
   let muted = false;
   let thrustNodes = null;
@@ -90,7 +90,8 @@
       o.type = type;
       o.frequency.setValueAtTime(freq, t0);
       if (slideTo != null) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
-      g.gain.setValueAtTime(vol, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + 0.005);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
       o.connect(g);
       g.connect(AC.destination);
@@ -99,7 +100,7 @@
     } catch (_) {}
   }
 
-  function noise(dur, vol = 0.05, when = 0, ff = 1000) {
+  function noise(dur, vol = 0.05, when = 0, ff = 1000, type = "bandpass") {
     if (muted || !AC) return;
     try {
       const n = Math.floor(AC.sampleRate * dur);
@@ -109,8 +110,9 @@
       const src = AC.createBufferSource();
       src.buffer = buf;
       const f = AC.createBiquadFilter();
-      f.type = "bandpass";
+      f.type = type;
       f.frequency.value = ff;
+      f.Q.value = type === "bandpass" ? 0.7 : 0.5;
       const g = AC.createGain();
       const t0 = AC.currentTime + when;
       g.gain.setValueAtTime(vol, t0);
@@ -123,10 +125,13 @@
     } catch (_) {}
   }
 
+  // Harsh filtered noise + low saw — closer to arcade thrust rumble than a clean tone
   function setThrust(on) {
     if (!AC || muted) {
       if (thrustNodes) {
-        try { thrustNodes.o.stop(); } catch (_) {}
+        try {
+          thrustNodes.nodes.forEach((n) => { try { n.stop(); } catch (_) {} });
+        } catch (_) {}
         thrustNodes = null;
       }
       return;
@@ -134,22 +139,67 @@
     if (on) {
       if (thrustNodes) return;
       try {
+        const t0 = AC.currentTime;
         const o = AC.createOscillator();
         const g = AC.createGain();
         const f = AC.createBiquadFilter();
+        const lfo = AC.createOscillator();
+        const lfoG = AC.createGain();
         o.type = "sawtooth";
-        o.frequency.value = 58;
+        o.frequency.value = 52;
         f.type = "lowpass";
-        f.frequency.value = 300;
-        g.gain.value = 0.015;
+        f.frequency.value = 220;
+        f.Q.value = 4;
+        lfo.frequency.value = 18;
+        lfoG.gain.value = 18;
+        lfo.connect(lfoG);
+        lfoG.connect(o.frequency);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(0.028, t0 + 0.05);
         o.connect(f);
         f.connect(g);
+
+        // Layer of mid noise for grit
+        const nLen = Math.floor(AC.sampleRate * 2);
+        const buf = AC.createBuffer(1, nLen, AC.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < nLen; i++) data[i] = Math.random() * 2 - 1;
+        const src = AC.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        const nf = AC.createBiquadFilter();
+        nf.type = "bandpass";
+        nf.frequency.value = 280;
+        nf.Q.value = 1.2;
+        const ng = AC.createGain();
+        ng.gain.value = 0.012;
+        src.connect(nf);
+        nf.connect(ng);
+        ng.connect(AC.destination);
         g.connect(AC.destination);
         o.start();
-        thrustNodes = { o, g };
+        lfo.start();
+        src.start();
+        thrustNodes = { nodes: [o, lfo, src], g, ng };
       } catch (_) {}
     } else if (thrustNodes) {
-      try { thrustNodes.o.stop(); } catch (_) {}
+      try {
+        const t0 = AC.currentTime;
+        if (thrustNodes.g) {
+          thrustNodes.g.gain.cancelScheduledValues(t0);
+          thrustNodes.g.gain.setValueAtTime(thrustNodes.g.gain.value, t0);
+          thrustNodes.g.gain.linearRampToValueAtTime(0.0001, t0 + 0.04);
+        }
+        if (thrustNodes.ng) {
+          thrustNodes.ng.gain.cancelScheduledValues(t0);
+          thrustNodes.ng.gain.setValueAtTime(thrustNodes.ng.gain.value, t0);
+          thrustNodes.ng.gain.linearRampToValueAtTime(0.0001, t0 + 0.04);
+        }
+        const nodes = thrustNodes.nodes.slice();
+        setTimeout(() => {
+          nodes.forEach((n) => { try { n.stop(); } catch (_) {} });
+        }, 60);
+      } catch (_) {}
       thrustNodes = null;
     }
   }
@@ -157,51 +207,75 @@
   function sfx(name) {
     unlockAudio();
     if (muted || !AC) return;
+    // Laser: classic short descending zip
     if (name === "fire") {
-      tone(920, 0.04, "square", 0.028);
-      tone(460, 0.07, "square", 0.018, 0.02);
+      tone(1400, 0.055, "square", 0.045, 0, 220);
+      tone(900, 0.04, "sawtooth", 0.02, 0.01, 180);
+      noise(0.03, 0.02, 0, 3000, "highpass");
+    // Smart bomb: deep blast + noise wash
     } else if (name === "bomb") {
-      noise(0.4, 0.1, 0, 350);
-      tone(100, 0.45, "sawtooth", 0.06, 0, 35);
+      noise(0.55, 0.14, 0, 400, "lowpass");
+      noise(0.35, 0.08, 0.02, 1200, "bandpass");
+      tone(90, 0.5, "sawtooth", 0.07, 0, 28);
+      tone(55, 0.4, "square", 0.04, 0.05, 30);
+    // Player death
     } else if (name === "die") {
-      noise(0.45, 0.09, 0, 500);
-      tone(280, 0.55, "sawtooth", 0.05, 0, 40);
+      noise(0.55, 0.11, 0, 600, "bandpass");
+      tone(320, 0.5, "sawtooth", 0.06, 0, 40);
+      tone(180, 0.35, "square", 0.04, 0.08, 35);
+    // Enemy / object explode — sharp crackle
     } else if (name === "explode") {
-      noise(0.16, 0.07, 0, 800);
-      tone(180, 0.12, "square", 0.035, 0, 50);
+      noise(0.14, 0.09, 0, 1400, "bandpass");
+      noise(0.1, 0.05, 0.02, 3200, "highpass");
+      tone(220, 0.1, "square", 0.04, 0, 55);
+    // Humanoid abduct warble
     } else if (name === "abduct") {
-      tone(240, 0.1, "sine", 0.04);
-      tone(360, 0.14, "sine", 0.035, 0.1);
-      tone(480, 0.18, "sine", 0.03, 0.2);
+      tone(180, 0.12, "triangle", 0.05, 0, 260);
+      tone(260, 0.14, "triangle", 0.045, 0.1, 360);
+      tone(340, 0.16, "triangle", 0.04, 0.2, 480);
+      tone(420, 0.18, "sine", 0.03, 0.3, 560);
+    // Mutant transform growl
     } else if (name === "mutant") {
-      tone(150, 0.1, "square", 0.05);
-      tone(80, 0.22, "sawtooth", 0.04, 0.08);
+      tone(140, 0.12, "sawtooth", 0.055, 0, 70);
+      tone(90, 0.25, "square", 0.045, 0.08, 45);
+      noise(0.2, 0.04, 0.05, 500, "bandpass");
+    // Rescue / drop-off — electronic blips (not sweet chiptune)
     } else if (name === "rescue") {
-      tone(523, 0.07, "square", 0.04);
-      tone(659, 0.09, "square", 0.04, 0.07);
-      tone(784, 0.12, "square", 0.04, 0.14);
+      tone(440, 0.06, "square", 0.045);
+      tone(554, 0.07, "square", 0.04, 0.06);
+      tone(659, 0.1, "square", 0.04, 0.12);
     } else if (name === "land") {
-      tone(392, 0.09, "square", 0.04);
-      tone(523, 0.12, "square", 0.04, 0.09);
+      tone(330, 0.07, "square", 0.04);
+      tone(440, 0.1, "square", 0.04, 0.07);
+    // Hyperspace whoosh
     } else if (name === "hyper") {
-      tone(90, 0.35, "sawtooth", 0.05, 0, 900);
-      noise(0.25, 0.05, 0, 2000);
+      noise(0.28, 0.07, 0, 2500, "highpass");
+      tone(80, 0.32, "sawtooth", 0.055, 0, 1100);
+      tone(200, 0.25, "square", 0.03, 0.05, 1400);
+    // Wave / start fanfare — raw square steps
     } else if (name === "start" || name === "wave") {
-      [330, 392, 523, 659].forEach((f, i) => tone(f, 0.09, "square", 0.038, i * 0.08));
+      [220, 277, 330, 440].forEach((f, i) => tone(f, 0.08, "square", 0.04, i * 0.07));
+    // Baiter / swarm alert
     } else if (name === "alert") {
-      tone(700, 0.07, "square", 0.05);
-      tone(400, 0.12, "square", 0.05, 0.09);
+      tone(880, 0.05, "square", 0.055);
+      tone(440, 0.08, "square", 0.05, 0.06);
+      tone(880, 0.05, "square", 0.045, 0.14);
+    // Planet destroy
     } else if (name === "planet") {
-      noise(0.9, 0.12, 0, 280);
-      tone(70, 1.0, "sawtooth", 0.07, 0, 25);
+      noise(1.0, 0.14, 0, 250, "lowpass");
+      noise(0.6, 0.08, 0.1, 800, "bandpass");
+      tone(60, 1.1, "sawtooth", 0.08, 0, 22);
+    // Extra life
     } else if (name === "extra") {
-      [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.09, "square", 0.04, i * 0.07));
+      [440, 554, 659, 880].forEach((f, i) => tone(f, 0.08, "square", 0.042, i * 0.065));
+    // Enemy spawn blip
     } else if (name === "spawn") {
-      tone(200, 0.08, "sine", 0.03, 0, 500);
+      tone(160, 0.09, "sine", 0.035, 0, 520);
+      noise(0.06, 0.025, 0, 900, "bandpass");
     }
   }
 
-  // ── Math ─────────────────────────────────────────────────────────────────
+  // ── Math  // ── Math ─────────────────────────────────────────────────────────────────
   function wrap(x) {
     x %= WORLD;
     if (x < 0) x += WORLD;
