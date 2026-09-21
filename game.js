@@ -729,10 +729,11 @@
     if (!any) destroyPlanet();
   }
 
-  // Camera: ship fixed on screen, look ahead in face direction
-  // (named worldToScreen — avoid clashing with window.screenX)
+  // Camera: ship stays at a FIXED screen X (classic Defender).
+  // Facing only aims thrust; world scrolls under the ship — no left/right teleport.
+  // (named worldToScreen - avoid clashing with window.screenX)
   function shipScreenX() {
-    return ship && ship.alive ? (ship.face > 0 ? VW * 0.3 : VW * 0.7) : VW * 0.4;
+    return VW * 0.38;
   }
 
   function worldToScreen(wx) {
@@ -761,23 +762,30 @@
     const fwd =
       faceRightHeld || keys.ArrowRight || keys.KeyD || keys.d || keys.D;
 
-    if (rev) ship.face = -1;
-    if (fwd) ship.face = 1;
+    // Reverse only flips facing (Williams Defender). Never teleports the ship.
+    // If both held, keep current face.
+    if (rev && !fwd) ship.face = -1;
+    if (fwd && !rev) ship.face = 1;
 
-    // Thrust + inertia
+    // Thrust + long coasting inertia (original drifts hard when you let off)
+    const THRUST_ACC = 420;
+    const CLIMB_ACC = 560;
+    const MAX_VX = 340;
+    const MAX_VY = 300;
     if (thr) {
-      ship.vx += ship.face * 540 * (dt / 1000);
+      ship.vx += ship.face * THRUST_ACC * (dt / 1000);
       setThrust(true);
     } else {
       setThrust(false);
-      ship.vx *= Math.pow(0.93, dt / 16);
+      // Very light drag — keep drifting across the landscape
+      ship.vx *= Math.pow(0.997, dt / 16);
     }
-    if (up) ship.vy -= 720 * (dt / 1000);
-    if (dn) ship.vy += 720 * (dt / 1000);
-    if (!up && !dn) ship.vy *= Math.pow(0.86, dt / 16);
+    if (up) ship.vy -= CLIMB_ACC * (dt / 1000);
+    if (dn) ship.vy += CLIMB_ACC * (dt / 1000);
+    if (!up && !dn) ship.vy *= Math.pow(0.90, dt / 16);
 
-    ship.vx = clamp(ship.vx, -400, 400);
-    ship.vy = clamp(ship.vy, -320, 320);
+    ship.vx = clamp(ship.vx, -MAX_VX, MAX_VX);
+    ship.vy = clamp(ship.vy, -MAX_VY, MAX_VY);
     ship.x = wrap(ship.x + ship.vx * (dt / 1000));
     ship.y += ship.vy * (dt / 1000);
 
