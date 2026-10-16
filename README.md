@@ -1,76 +1,26 @@
-# DEFENDER — Williams 1981 Style
+# DEFENDER — Williams 1981 web recreation
 
-Browser recreation of **Williams Electronics’ Defender** (arcade, 1981), companion to:
+**Live:** https://bamtec70.github.io/defender-game/ · part of the [WTP Arcade](https://wethepeoplepress.com/games/)
 
-- [PAC-MAN](https://bamtec70.github.io/pacman-game/)
-- [MS. PAC-MAN](https://bamtec70.github.io/ms-pacman-game/)
-- [DIG DUG](https://bamtec70.github.io/dig-dug-game/)
-
-## Play
-
-**Live:** https://bamtec70.github.io/defender-game/
-
-Or open `index.html` locally:
-
-```powershell
-start index.html
-```
-
-## Mission
-
-Fly a long, wrapping planet. **Protect humanoids** from **Landers**. If a Lander reaches the top of the sky with a captive, it becomes a **Mutant**. If every human is lost, the **planet is destroyed** and the wave becomes a mutant assault in space.
-
-## Williams-style systems
-
-- **Multi-color raster look** (not 1970s green monochrome): rainbow mountains, colored enemies, cyan lasers
-- **Thrust / reverse flight** with inertia
-- **Long horizontal laser** beams, rapid fire
-- **Smart bombs** clear all enemies *on screen*
-- **Hyperspace** (risky random teleport)
-- **Scanner** radar with color-coded blips
-- **Catch falling humans**, then **fly low to set them down** (+500 catch, +500 land)
-- Enemy cast: Landers, Mutants, Bombers (mines), Pods → Swarmers, Baiters
-- Staggered lander materialization, baiters if you stall
-- Extra ship + bomb every **10,000** points
+Native 292×240 playfield (cabinet resolution), pixel-scaled, with the scanner at top centre, score / reserve ships / smart bombs to its left, the brown mountain line, twinkling starfield and multicoloured fading laser. Every sprite is hand-authored pixel data in `game.js` and every sound is synthesized with the Web Audio API. No ROM data, samples or extracted images are included.
 
 ## Controls
-
-### Desktop
-
 | Input | Action |
-|-------|--------|
-| **↑ / W** | Climb |
-| **↓ / S** | Dive |
-| **← / A** | Face left (reverse) |
-| **→ / D** | Face right |
-| **Shift / Z** | Thrust |
-| **Space** (hold) | Fire laser |
-| **B** | Smart bomb |
-| **H** | Hyperspace |
-| **P / Esc** | Pause |
-| **M** | Mute |
+|---|---|
+| ↑ ↓ / W S | Up / down |
+| → / D | Thrust (in the direction the ship faces) |
+| ← / A / Shift | Reverse |
+| Space / Ctrl | Fire |
+| B / Z | Smart bomb |
+| H / X | Hyperspace (risky) |
+| 5 · Enter / 1 | Coin · Start |
+| P / M | Pause / sound |
+| Touch | Up/down rocker (left), THRUST, REVERSE, FIRE, BOMB, HYPER (right), all multi-touch; tap the screen to coin/start |
 
-### Phone / touch
+## Game
+Lander 150 · Mutant 150 · Baiter 200 · Bomber 250 · Pod 1000 · Swarmer 150. Catch a falling humanoid 500, set it down 500, safe fall 250. Extra ship and smart bomb every 10,000.
+Waves bring 15/20 Landers in batches of 5 plus Bombers and Pods (which burst into Swarmers); Baiters appear if you take too long. A Lander that carries a humanoid to the top becomes a Mutant. Lose every humanoid and the planet explodes: the wave becomes all Mutants in space with no terrain until the planet is restored every 5th wave. Wave bonus: 100 × wave (max 500) per surviving humanoid. High-score table with initials (`defender_table_v1`), best score kept in `defender_hi_v3`.
 
-**▲▼** climb/dive · **THR** thrust · **REV / FWD** face · **FIRE** · **BOMB** · **HYP** · pause · mute
-
-## Scoring (arcade-style)
-
-| Target | Points |
-|--------|--------|
-| Lander | 150 |
-| Mutant | 150 |
-| Bomber | 250 |
-| Pod | 1000 |
-| Swarmer | 150 |
-| Baiter | 200 |
-| Catch falling human | 500 |
-| Land human safely | 500 |
-
-## Files
-
-- `index.html` — shell  
-- `style.css` — CRT green framing + touch UI  
-- `game.js` — full engine  
+Debug: `?wave=N` starts directly at wave N (`&planet=0` starts with the planet destroyed); with it, the backquote key skips a wave.
 
 Fan recreation for personal / educational use. Not affiliated with Williams or its successors.
