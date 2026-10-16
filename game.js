@@ -10,6 +10,7 @@ const WORLD = 2048;               // world wraps; scanner shows it at 1/16
 const TOP = 36, GROUND = 216;     // playfield top (below scanner divider), terrain baseline
 const HUM_Y = 229;                // humanoid feet line
 const SC_X0 = 82, SC_X1 = 213, SC_Y1 = 32;
+const SCAN_COLS = ["#2a10b0", "#00a900", "#e00000"]; /* df_ref3: wave1 blue, wave2 green, wave3 red; waves 4+ not seen, cycle assumed */
 const BLUE = "#2a10b0", TERR = "#b4581c";
 const STEP = 1 / 60;
 const qs = new URLSearchParams(location.search);
@@ -27,6 +28,10 @@ const FONT = {
   "/":"01010204081010","(":"02040808080402",")":"08040202020408","'":"04040800000000","=":"00001F001F0000"," ":"00000000000000"
 };
 for (const k in FONT) { const s = FONT[k].replace(/ /g, ""); FONT[k] = []; for (let i = 0; i < 7; i++) FONT[k].push(parseInt(s.substr(i * 2, 2), 16)); }
+function textW(s, cx, y, col) { /* tally font: 8 px advance, 4 px space, centred (measured) */
+  s = String(s).toUpperCase(); let w = 0; for (const ch of s) w += ch === " " ? 4 : 8; let x = Math.round(cx - (w - 2) / 2); g.fillStyle = col;
+  for (const ch of s) { const f = FONT[ch]; if (f) for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (f[r] & (16 >> c)) g.fillRect(x + c + (c > 2 ? 1 : 0), y + r, c === 2 ? 2 : 1, 1); x += ch === " " ? 4 : 8; }
+}
 function text(s, x, y, col, sc = 1, align = "left") {
   s = String(s).toUpperCase();
   const adv = 6 * sc;
@@ -213,7 +218,7 @@ const SFX = {
   coin() { nburst(0.85, 0.3, 2400, 0.6); tone("square", 280, 170, 0.85, 0.08); },
   extra() { if (!audio() || muted) return; for (let i = 0; i < 8; i++) tone("square", i % 2 ? 1568 : 1046, i % 2 ? 1568 : 1046, 0.07, 0.1, i * 0.08); },
   tally() { tone("square", 1250, 1250, 0.05, 0.11); tone("square", 1875, 1875, 0.04, 0.06, 0.05); },
-  planet() { nburst(3, 0.8, 1200, 0.4, 0, 60, "lowpass"); tone("sawtooth", 120, 25, 2.8, 0.3); },
+  planet() { nburst(2.0, 0.8, 1400, 0.3, 0, 300, "lowpass"); tone("sawtooth", 140, 40, 2.0, 0.25); }, /* measured: ~2 s loud, energy <1.5 kHz */
 };
 // thrust (measured): steady noise with ~98% of energy below 500 Hz, peaks 150-370 Hz, ~40% of explosion level
 
@@ -223,6 +228,7 @@ let mode = "attract", modeT = 0, credits = 0, paused = false, frame = 0;
 let score = 0, lives = 3, bombs = 3, wave = 1, nextExtra = 10000;
 let ship, enemies = [], shots = [], beams = [], parts = [], humans = [], mines = [], pops = [];
 let planetAlive = true, waveT = 0, landerQueue = 0, batchT = 0, baiterT = 0, waveDone = false;
+let planetFlash = 0, FLASHC = ["#7020c0", "#d02020", "#20c0c0", "#e08020", "#c020c0", "#2040d0"];
 let deadT = 0, flashT = 0, bonusT = 0, bonusShown = 0, planetBoomT = 0, entry = null;
 const DEFAULT_TABLE = [["DRJ", 21270], ["SAM", 18315], ["LED", 15920], ["PGD", 14285], ["CRB", 12520], ["MRS", 11035], ["SSR", 8265], ["TMH", 6010]];
 let table;
@@ -239,7 +245,7 @@ function waveCfg(w) {
   const k = Math.min(w, 12);
   return {
     landers: w === 1 ? 15 : 20, batch: 5, bombers: Math.min(2 + w, 6), pods: w === 1 ? 1 : Math.min(2 + (w >> 1), 6),
-    baiterDelay: Math.max(20, 62 - 5 * (w - 1)), baiterEvery: Math.max(4, 13 - w), speed: 1 + 0.1 * (k - 1), fire: 1 + 0.14 * (k - 1),
+    baiterDelay: Math.max(20, 89 - 5 * (w - 1)) /* wave1 89 s measured df_ref3 */, baiterEvery: Math.max(4, 13 - w), speed: 1 + 0.1 * (k - 1), fire: 1 + 0.14 * (k - 1),
     swarm: Math.min(3 + (w >> 1), 7),
   };
 }
@@ -343,7 +349,7 @@ function update() {
   frame++; modeT++;
   if (mode === "play") updatePlay();
   else if (mode === "bonus") updateBonus();
-  else if (mode === "planet") { planetBoomT--; updateParts(); if (planetBoomT <= 0) mode = "play"; }
+  else if (mode === "planet") { planetBoomT--; if (planetFlash > 0) planetFlash--; updateParts(); if (planetBoomT <= 0) mode = "play"; }
   else if (mode === "over") { if (modeT > 180) { const q = qualifies(); if (q >= 0) { mode = "entry"; entry = { pos: q, letters: [0, 0, 0], i: 0, t: 0 }; } else { mode = "attract"; modeT = 0; } } }
   else if (mode === "entry") updateEntry();
   for (const p of pops) p.t--; pops = pops.filter(p => p.t > 0);
@@ -418,7 +424,7 @@ function updateEnemies(c) {
     switch (e.type) {
       case "lander": {
         if (e.carry) {
-          e.y -= 0.42 * c.speed; e.carry.x = e.x + 3; e.carry.y = e.y + 7;
+          e.y -= 0.5; /* measured df_ref3 carry climb 0.43-0.56 px/frame */ e.carry.x = e.x + 3; e.carry.y = e.y + 7;
           if (e.y <= TOP + 2) { // humanoid becomes part of a mutant
             const h = e.carry; humans.splice(humans.indexOf(h), 1); e.carry = null; e.type = "mutant"; SFX.mutant();
             checkPlanet();
@@ -446,8 +452,8 @@ function updateEnemies(c) {
         break;
       }
       case "baiter": {
-        const want = Math.sign(dx) * (Math.abs(ship.vx) + 1.8 * c.speed);
-        e.vx += (want - e.vx) * 0.05; e.x = wrap(e.x + e.vx); e.y += (ship.y - 10 + Math.sin(e.t / 20) * 25 - e.y) * 0.03;
+        const want = Math.sign(dx) * (Math.abs(ship.vx) + 3.5); /* measured: ~3-4 px/frame relative to ship, overshoots */
+        e.vx += (want - e.vx) * 0.05; e.x = wrap(e.x + e.vx); { const dy = ship.y - 10 + Math.sin(e.t / 20) * 25 - e.y; e.y += Math.max(-0.45, Math.min(0.45, dy)); } /* measured vertical ~0.45 px/frame */
         break;
       }
       case "bomber": {
@@ -518,8 +524,10 @@ function updateHumans() {
 }
 function checkPlanet() {
   if (planetAlive && humans.length === 0) {
-    planetAlive = false; mode = "planet"; planetBoomT = 120; flashT = 30; SFX.planet();
-    for (let i = 0; i < 160; i++) { const x = wrap(camX() + Math.random() * W); parts.push({ x, y: GROUND - Math.random() * 20, vx: (Math.random() - 0.5) * 3, vy: -Math.random() * 3, t: 100, c: i % 3 ? TERR : "#ffffff", w: 2 }); }
+    planetAlive = false; mode = "planet"; planetBoomT = 210; planetFlash = 72; SFX.planet();
+    /* measured df_ref3: terrain breaks into debris rising ~1.7 px/frame, gone after ~3.5 s */
+    const PC = [TERR, TERR, TERR, "#ff2020", "#ffff20", "#20ffff", "#ff30ff", "#ffffff"];
+    for (let i = 0; i < 260; i++) { const x = wrap(camX() + Math.random() * W); parts.push({ x, y: GROUND - Math.random() * 57, vx: (Math.random() - 0.5) * 0.6, vy: -(1.4 + Math.random() * 0.6), t: 150 + Math.random() * 60, c: PC[i % PC.length], w: 2 }); }
     for (const e of enemies) if (e.type === "lander") { if (e.carry) e.carry = null; e.type = "mutant"; }
   }
 }
@@ -530,7 +538,7 @@ function updateParts() {
 function updateBonus() {
   const per = Math.min(5, wave) * 100;
   if (modeT > 60 && bonusShown < humans.length && modeT % 10 === 0) { bonusShown++; addScore(per); SFX.tally(); }
-  if (modeT > 60 + humans.length * 10 + 150) { wave++; mode = "play"; startWave(); }
+  if (modeT > (humans.length ? 132 + humans.length * 10 + 24 : 156)) { wave++; mode = "play"; startWave(); }
 }
 
 /* ---------------- high scores ---------------- */
@@ -553,7 +561,7 @@ function drawSpr(s, x, y, dir = 1) { g.drawImage(dir > 0 ? s.r : s.l, Math.round
 const SCORE_COLS = ["#ff30ff", "#4060ff", "#20ff20", "#20ffff", "#ffff20", "#ff2020"];
 function drawHUD() {
   // scanner border and divider
-  g.fillStyle = BLUE;
+  g.fillStyle = mode === "attract" || mode === "entry" ? BLUE : SCAN_COLS[(Math.max(1, wave) - 1) % 3];
   g.fillRect(0, 33, W, 2);
   g.fillRect(SC_X0, 0, 2, 33); g.fillRect(SC_X1, 0, 2, 33); g.fillRect(SC_X0, 0, SC_X1 - SC_X0 + 2, 1);
   // view brackets (white) at the centre of the scanner
@@ -641,11 +649,13 @@ function drawPlay() {
   if (!ship.alive && deadT < 40 && lives <= 1) text("GAME OVER", W / 2, 110, "#20ff20", 1, "center");
 }
 function drawBonus() {
-  text("ATTACK WAVE " + wave, W / 2, 70, "#ff2020", 1, "center");
-  text("COMPLETED", W / 2, 84, "#ff2020", 1, "center");
-  text("BONUS X " + Math.min(5, wave) * 100, W / 2, 110, "#20ffff", 1, "center");
+  g.fillStyle = "#000"; g.fillRect(SC_X0 + 2, 1, SC_X1 - SC_X0 - 2, 32); /* scanner blank during tally (measured) */
+  if (modeT > 132 + humans.length * 10) return; /* measured: text ~2.2 s, then ~0.4 s blank */
+  const col = ["#f5ffa0", "#20ffff"][(wave - 1) % 2]; /* wave1 pale yellow, wave2 cyan (measured); later alternation assumed */
+  textW("ATTACK WAVE " + wave, 148, 73, col); textW("COMPLETED", 148, 89, col);
+  textW("BONUS X " + Math.min(5, wave) * 100, 148, 137, col);
   const n = humans.length, x0 = W / 2 - n * 5;
-  for (let i = 0; i < bonusShown; i++) drawSpr(SPR.human, x0 + i * 10 + 4, 130);
+  for (let i = 0; i < bonusShown; i++) drawSpr(SPR.human, x0 + i * 10 + 4, 110);
 }
 function bigTitle(y) {
   const s = "DEFENDER", sc = 4, adv = 6 * sc, x0 = Math.round(W / 2 - (s.length * adv) / 2);
@@ -684,7 +694,7 @@ function drawEntry() {
   text(String(score), W / 2, 170, "#20ffff", 1, "center");
 }
 function draw() {
-  g.fillStyle = flashT > 0 && (flashT & 2) ? "#ffffff" : "#000000"; g.fillRect(0, 0, W, H);
+  g.fillStyle = planetFlash > 0 && Math.random() < 0.33 ? FLASHC[(Math.random() * FLASHC.length) | 0] : flashT > 0 && (flashT & 2) ? "#ffffff" : "#000000"; g.fillRect(0, 0, W, H);
   if (mode === "attract") drawAttract();
   else if (mode === "entry") drawEntry();
   else if (mode === "bonus") { drawHUD(); drawBonus(); }
