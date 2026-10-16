@@ -10,7 +10,7 @@ const WORLD = 2048;               // world wraps; scanner shows it at 1/16
 const TOP = 36, GROUND = 216;     // playfield top (below scanner divider), terrain baseline
 const HUM_Y = 229;                // humanoid feet line
 const SC_X0 = 82, SC_X1 = 213, SC_Y1 = 32;
-const SCAN_COLS = ["#2a10b0", "#00a900", "#e00000"]; /* df_ref3: wave1 blue, wave2 green, wave3 red; waves 4+ not seen, cycle assumed */
+const SCAN_COLS = ["#2a10b0", "#00ac00", "#fd0000", "#d75202", "#faae01"]; /* df_ref3/4 waves 1-5; blue while ship is dead; wave 6+ not seen, cycle assumed */
 const BLUE = "#2a10b0", TERR = "#b4581c";
 const STEP = 1 / 60;
 const qs = new URLSearchParams(location.search);
@@ -166,6 +166,16 @@ function tone(type, f0, f1, dur, vol, delay = 0, curve = "exp") {
   if (f1 !== f0) curve === "lin" ? o.frequency.linearRampToValueAtTime(f1, t + dur) : o.frequency.exponentialRampToValueAtTime(f1, t + dur);
   env(gn, t, 0.004, vol, dur); o.connect(gn); gn.connect(master); o.start(t); o.stop(t + dur + 0.03);
 }
+let laserNode = null;
+function laserVoice() {
+  if (!audio() || muted) return;
+  if (laserNode) { try { laserNode.gn.gain.cancelScheduledValues(AC.currentTime); laserNode.gn.gain.setValueAtTime(0, AC.currentTime); laserNode.n.stop(); } catch (e) {} }
+  const t = AC.currentTime, n = noise(), f = AC.createBiquadFilter(), gn = AC.createGain();
+  f.type = "lowpass"; f.Q.value = 0.7; f.frequency.setValueAtTime(4400, t); f.frequency.exponentialRampToValueAtTime(2400, t + 0.1);
+  f.frequency.exponentialRampToValueAtTime(1200, t + 1.0); f.frequency.exponentialRampToValueAtTime(1000, t + 2.0);
+  gn.gain.setValueAtTime(0.0001, t); gn.gain.linearRampToValueAtTime(0.32, t + 0.01); gn.gain.exponentialRampToValueAtTime(0.21, t + 1.8); gn.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+  n.connect(f); f.connect(gn); gn.connect(master); n.start(t); n.stop(t + 2.25); laserNode = { n, gn };
+}
 function nburst(dur, vol, fc, q = 1, delay = 0, fc1, type = "bandpass") {
   if (!audio() || muted) return;
   const t = AC.currentTime + delay, n = noise(), f = AC.createBiquadFilter(), gn = AC.createGain();
@@ -189,22 +199,29 @@ function thrustSound(on) {
 // Tuned against df_ref2.mp3 (band energies / peak tracking, see README)
 const SFX = {
   // laser: bright click (~1.5 kHz noise) then a stepped tone falling ~780 -> 560 Hz over ~0.16 s
-  fire() { nburst(0.03, 0.35, 1600, 0.8); tone("square", 780, 560, 0.16, 0.1, 0.01); tone("triangle", 1560, 1120, 0.14, 0.04, 0.01); },
+  // laser (df_ref4 isolated taps x5): noise, centroid ~2.2 kHz at onset -> 1.2 kHz @0.1 s -> 600 Hz @1 s -> 500 Hz @1.8 s,
+  // level -3.5 dB/s; one voice, a new shot restarts it
+  fire() { laserVoice(); },
   // enemy explosion: loud, mostly <500 Hz noise (peaks 200-370 Hz), ~0.8 s
   boom() { nburst(0.8, 0.9, 1400, 0.7, 0, 180, "lowpass"); nburst(0.12, 0.25, 900, 1); },
   smallBoom() { nburst(0.45, 0.6, 1600, 0.7, 0, 220, "lowpass"); },
   // lander materialize: warbling rise
-  materialize() { if (!audio() || muted) return; for (let i = 0; i < 10; i++) tone("square", 300 + i * 70, 340 + i * 70, 0.05, 0.04, i * 0.05); },
+  // materialize (df_ref4: Baiter 513.4 s, hyperspace re-entry 137.7 s): ~1.0 s full-level low noise, peak rising ~100 -> 600 Hz
+  materialize() { nburst(1.0, 0.9, 120, 1.5, 0, 650); tone("sawtooth", 90, 520, 1.0, 0.1, 0, "lin"); },
   alarm() { if (!audio() || muted) return; for (let i = 0; i < 6; i++) tone("square", i % 2 ? 1100 : 820, i % 2 ? 1100 : 820, 0.11, 0.07, i * 0.12); },
   scream() { tone("triangle", 2600, 500, 0.9, 0.16); tone("square", 2700, 520, 0.9, 0.05); },
   catchH() { [700, 900, 1200].forEach((f, i) => tone("square", f, f, 0.07, 0.1, i * 0.06)); },
   landH() { [1200, 900, 1200, 1600].forEach((f, i) => tone("square", f, f, 0.06, 0.1, i * 0.06)); },
-  mutant() { tone("sawtooth", 160, 900, 0.5, 0.12); tone("square", 170, 950, 0.5, 0.06, 0.05); },
-  enemyShot() { tone("square", 1700, 1100, 0.06, 0.035); },
+  // mutant (df_ref4 quiet windows 151, 753, 813, 1050 s): descending chirp ~3.8 kHz -> 1.1 kHz over ~0.75 s, repeats while on screen
+  mutant() { tone("square", 3800, 1100, 0.75, 0.05); },
+  // enemy shot (Baiter shots 515.4-516.1 s): ~0.17 s full-level low buzz, peak 86-130 Hz
+  enemyShot() { tone("square", 120, 95, 0.17, 0.14); nburst(0.17, 0.4, 300, 0.7, 0, 0, "lowpass"); },
   baiter() { if (!audio() || muted) return; for (let i = 0; i < 4; i++) tone("square", 1400, 600, 0.08, 0.06, i * 0.09); },
   // smart bomb: bright 2-3 kHz noise crack (~0.5 s) over a low boom
-  bomb() { nburst(0.5, 0.8, 2700, 0.6, 0, 1200); nburst(1.0, 0.7, 1500, 0.6, 0.05, 120, "lowpass"); tone("sawtooth", 90, 30, 0.9, 0.2); },
-  hyper() { tone("square", 150, 3000, 0.45, 0.12); tone("sawtooth", 3000, 150, 0.45, 0.06, 0.45); },
+  // smart bomb (isolated, df_ref4 141/441/621 s): ~0.15 s full-level crack, then ~2.2-2.4 s low rumble peaking 20-100 Hz
+  bomb() { nburst(0.15, 0.9, 900, 0.5); nburst(2.3, 0.45, 160, 0.7, 0.12, 0, "lowpass"); },
+  // hyperspace (137.3 s): silent while the playfield is blank; the re-entry plays the materialize sound
+  hyper() { },
   // player death: low rumble (>80% energy under 500 Hz) decaying over ~1.8 s, then silence
   death() { nburst(1.8, 0.9, 900, 0.6, 0, 140, "lowpass"); nburst(0.25, 0.4, 2400, 0.7); tone("sawtooth", 220, 40, 1.6, 0.12); },
   // start: ~2 s noisy, warbling harmonic sweep (peaks wander 250 -> 820 -> 1640 -> 2700 Hz)
@@ -228,6 +245,7 @@ let mode = "attract", modeT = 0, credits = 0, paused = false, frame = 0;
 let score = 0, lives = 3, bombs = 3, wave = 1, nextExtra = 10000;
 let ship, enemies = [], shots = [], beams = [], parts = [], humans = [], mines = [], pops = [];
 let planetAlive = true, waveT = 0, landerQueue = 0, batchT = 0, baiterT = 0, waveDone = false;
+let tallyCol = 0; const TALLY_COLS = ["#f5ffa0", "#20ffff", "#fa02f6", "#fa0356", "#f6af05", "#8cf808"];
 let planetFlash = 0, FLASHC = ["#7020c0", "#d02020", "#20c0c0", "#e08020", "#c020c0", "#2040d0"];
 let deadT = 0, flashT = 0, bonusT = 0, bonusShown = 0, planetBoomT = 0, entry = null;
 const DEFAULT_TABLE = [["DRJ", 21270], ["SAM", 18315], ["LED", 15920], ["PGD", 14285], ["CRB", 12520], ["MRS", 11035], ["SSR", 8265], ["TMH", 6010]];
@@ -328,7 +346,7 @@ function doBomb() {
 }
 function doHyper() {
   if (mode !== "play" || !ship.alive || ship.hyperT) return;
-  ship.hyperT = 50; SFX.hyper(); thrustSound(false);
+  ship.hyperT = 42; SFX.hyper(); thrustSound(false); /* measured: playfield blank 24 frames, then ship re-materializes */
 }
 function fireLaser() {
   if (beams.length >= 4) return;
@@ -362,7 +380,7 @@ function updatePlay() {
   if (ship.alive) {
     if (ship.hyperT) {
       ship.hyperT--;
-      if (ship.hyperT === 25) { ship.x = wrap(ship.x + 400 + Math.random() * 1200); ship.y = TOP + 10 + Math.random() * 150; ship.vx = 0; }
+      if (ship.hyperT === 18) { ship.x = wrap(ship.x + 400 + Math.random() * 1200); ship.y = TOP + 10 + Math.random() * 150; ship.vx = 0; SFX.materialize(); }
       if (ship.hyperT === 0 && Math.random() < 0.25) shipDie();
     } else {
       if (inp.up) ship.y -= 2; if (inp.down) ship.y += 2;
@@ -406,14 +424,15 @@ function updatePlay() {
   updateEnemies(c); updateShots(); updateBeams(); updateHumans(); updateParts();
   // wave complete: all landers (and mutants) destroyed
   if (!testHold && ship.alive && landerQueue === 0 && !enemies.some(e => e.type === "lander" || e.type === "mutant")) {
-    mode = "bonus"; modeT = 0; bonusShown = 0; thrustSound(false); parts = []; beams = [];
+    mode = "bonus"; modeT = 0; bonusShown = 0; tallyCol = (Math.random() * TALLY_COLS.length) | 0; thrustSound(false); parts = []; beams = [];
   }
   if (flashT > 0) flashT--;
+  if (frame % 48 === 0 && enemies.some(e => e.type === "mutant" && onScreen(e.x))) SFX.mutant(); /* repeating chirp (measured ~0.75-0.9 s) */
 }
 
 function aimShot(e, spd) {
   const dx = dxTo(e.x, ship.x + 8), dy = ship.y + 3 - e.y, d = Math.hypot(dx, dy) || 1;
-  shots.push({ x: e.x, y: e.y, vx: dx / d * spd + ship.vx * 0.5, vy: dy / d * spd, t: 160 }); if (onScreen(e.x)) SFX.enemyShot();
+  shots.push({ x: e.x, y: e.y, vx: dx / d * spd, vy: dy / d * spd, t: 160 }); if (onScreen(e.x)) SFX.enemyShot();
 }
 function updateEnemies(c) {
   for (const e of enemies.slice()) {
@@ -447,8 +466,9 @@ function updateEnemies(c) {
         break;
       }
       case "mutant": {
-        e.x = wrap(e.x + Math.sign(dx) * Math.min(Math.abs(dx), 1.5 * c.speed + (rnd() - 0.5)));
-        e.y += Math.sign(dy) * 0.9 + (rnd() - 0.5) * 3;
+        /* df_ref4 151 s: approach 1.4 px/frame, vertical ~0.55 px/frame, x jitter about +-2 px */
+        e.x = wrap(e.x + Math.sign(dx) * Math.min(Math.abs(dx), 1.4 * c.speed) + (rnd() - 0.5) * 3);
+        e.y += Math.sign(dy) * Math.min(Math.abs(dy), 0.55);
         break;
       }
       case "baiter": {
@@ -476,7 +496,7 @@ function updateEnemies(c) {
     // firing
     if (vis && ship.alive && e.type !== "pod" && e.type !== "bomber") {
       e.fireT -= c.fire * (e.type === "baiter" ? 2 : 1);
-      if (e.fireT <= 0) { e.fireT = 90 + rnd() * 140; aimShot(e, 1.3 + 0.15 * Math.min(wave, 8)); }
+      if (e.fireT <= 0) { e.fireT = e.type === "baiter" ? 18 : 90 + rnd() * 140; /* Baiter shots every ~0.3 s (measured) */ aimShot(e, 0.4 + rnd() * 0.93); /* measured 0.4-1.33 px/frame */ }
     }
     // collision with ship
     const s = SIZES[e.type];
@@ -537,8 +557,8 @@ function updateParts() {
 }
 function updateBonus() {
   const per = Math.min(5, wave) * 100;
-  if (modeT > 60 && bonusShown < humans.length && modeT % 10 === 0) { bonusShown++; addScore(per); SFX.tally(); }
-  if (modeT > (humans.length ? 132 + humans.length * 10 + 24 : 156)) { wave++; mode = "play"; startWave(); }
+  if (bonusShown < humans.length && modeT % 4 === 0) { bonusShown++; addScore(per); } /* icons every 4 frames, silent (measured) */
+  if (modeT > 132 + humans.length * 4 + 24) { wave++; mode = "play"; startWave(); }
 }
 
 /* ---------------- high scores ---------------- */
@@ -561,7 +581,7 @@ function drawSpr(s, x, y, dir = 1) { g.drawImage(dir > 0 ? s.r : s.l, Math.round
 const SCORE_COLS = ["#ff30ff", "#4060ff", "#20ff20", "#20ffff", "#ffff20", "#ff2020"];
 function drawHUD() {
   // scanner border and divider
-  g.fillStyle = mode === "attract" || mode === "entry" ? BLUE : SCAN_COLS[(Math.max(1, wave) - 1) % 3];
+  g.fillStyle = mode === "attract" || mode === "entry" ? BLUE : (ship && !ship.alive ? BLUE : SCAN_COLS[(Math.max(1, wave) - 1) % 5]);
   g.fillRect(0, 33, W, 2);
   g.fillRect(SC_X0, 0, 2, 33); g.fillRect(SC_X1, 0, 2, 33); g.fillRect(SC_X0, 0, SC_X1 - SC_X0 + 2, 1);
   // view brackets (white) at the centre of the scanner
@@ -618,6 +638,7 @@ function drawBeams() {
   }
 }
 function drawPlay() {
+  if (ship.alive && ship.hyperT > 18) return; /* hyperspace: whole playfield blank (measured) */
   drawStars(); drawTerrain();
   // humanoids
   for (const h of humans) { const x = rel(h.x); if (x > -4 && x < W + 2) drawSpr(SPR.human, x, h.y - 5); }
@@ -643,19 +664,19 @@ function drawPlay() {
       const fx = ship.dir > 0 ? ship.sx - 2 : ship.sx + 17, L = 2 + ((frame >> 1) & 3);
       for (let i = 0; i < L; i++) { g.fillStyle = ["#ffffff", "#ffff20", "#ff9000", "#ff2020"][i] || "#ff2020"; g.fillRect(fx - ship.dir * i * 2, ship.y + 2 + ((frame + i) & 1), 2, 1); }
     }
-  } else if (ship.hyperT > 0) { const k = ship.hyperT % 25; g.fillStyle = "#fff"; for (let i = 0; i < 8; i++) g.fillRect(ship.sx + 6 + Math.cos(i) * k, ship.y + 3 + Math.sin(i) * k * 0.6, 1, 1); }
+  } else if (ship.hyperT > 0) { const k = ship.hyperT; g.fillStyle = "#fff"; for (let i = 0; i < 8; i++) g.fillRect(ship.sx + 6 + Math.cos(i) * k, ship.y + 3 + Math.sin(i) * k * 0.6, 1, 1); }
   for (const p of parts) { const x = rel(p.x); g.fillStyle = p.t < 12 && (p.t & 2) ? "#000" : p.c; g.fillRect(x | 0, p.y | 0, p.w, p.ring ? 2 : 1); }
   for (const p of pops) text(p.txt, rel(p.x), p.y, "#ffffff", 1, "center");
   if (!ship.alive && deadT < 40 && lives <= 1) text("GAME OVER", W / 2, 110, "#20ff20", 1, "center");
 }
 function drawBonus() {
   g.fillStyle = "#000"; g.fillRect(SC_X0 + 2, 1, SC_X1 - SC_X0 - 2, 32); /* scanner blank during tally (measured) */
-  if (modeT > 132 + humans.length * 10) return; /* measured: text ~2.2 s, then ~0.4 s blank */
-  const col = ["#f5ffa0", "#20ffff"][(wave - 1) % 2]; /* wave1 pale yellow, wave2 cyan (measured); later alternation assumed */
+  if (modeT > 132 + humans.length * 4) return; /* measured: text ~2.2 s, then ~0.4 s blank */
+  const col = TALLY_COLS[tallyCol]; /* colour differs per tally, not per wave (df_ref3/4) */
   textW("ATTACK WAVE " + wave, 148, 73, col); textW("COMPLETED", 148, 89, col);
   textW("BONUS X " + Math.min(5, wave) * 100, 148, 137, col);
-  const n = humans.length, x0 = W / 2 - n * 5;
-  for (let i = 0; i < bonusShown; i++) drawSpr(SPR.human, x0 + i * 10 + 4, 110);
+  const x0 = Math.round(148 - (humans.length * 8 - 2) / 2); /* icons y 153, 8 px pitch (measured) */
+  for (let i = 0; i < bonusShown; i++) drawSpr(SPR.human, x0 + i * 8, 153);
 }
 function bigTitle(y) {
   const s = "DEFENDER", sc = 4, adv = 6 * sc, x0 = Math.round(W / 2 - (s.length * adv) / 2);
