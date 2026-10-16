@@ -424,7 +424,7 @@ function updateEnemies(c) {
     switch (e.type) {
       case "lander": {
         if (e.carry) {
-          e.y -= 0.5; /* measured df_ref3 carry climb 0.43-0.56 px/frame */ e.carry.x = e.x + 3; e.carry.y = e.y + 7;
+          e.y -= 0.5; /* measured df_ref3 carry climb 0.43-0.56 px/frame */ e.carry.x = wrap(e.x + 3); e.carry.y = e.y + 7;
           if (e.y <= TOP + 2) { // humanoid becomes part of a mutant
             const h = e.carry; humans.splice(humans.indexOf(h), 1); e.carry = null; e.type = "mutant"; SFX.mutant();
             checkPlanet();
