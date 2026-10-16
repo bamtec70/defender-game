@@ -229,7 +229,7 @@ let table;
 try { table = JSON.parse(localStorage.getItem("defender_table_v1")) || DEFAULT_TABLE.slice(); } catch (e) { table = DEFAULT_TABLE.slice(); }
 let high = Math.max(Number(localStorage.getItem("defender_hi_v3") || 0), table[0][1]);
 
-const wrap = x => ((x % WORLD) + WORLD) % WORLD;
+const wrap = x => { const r = ((x % WORLD) + WORLD) % WORLD; return r >= WORLD ? r - WORLD : r; };
 const camX = () => wrap(ship.x - ship.sx);
 function rel(x) { let d = wrap(x - camX()); if (d > WORLD - 64) d -= WORLD; return d; } // screen x
 function onScreen(x, m = 0) { const s = rel(x); return s > -m && s < W + m; }
@@ -267,6 +267,7 @@ function startWave() {
   const c = waveCfg(wave);
   if (wave > 1 && wave % 5 === 0 && (!planetAlive || humans.length < 10)) { planetAlive = true; resetHumans(); }
   enemies = []; shots = []; beams = []; mines = []; waveDone = false;
+  for (const h of humans) { h.by = null; if (h.state === "carried" || h.state === "fall") { h.state = "walk"; h.y = HUM_Y - 1; h.vy = 0; } }
   landerQueue = c.landers; batchT = 60; waveT = 0; baiterT = c.baiterDelay * 60;
   for (let i = 0; i < c.bombers; i++) spawn("bomber", wrap(ship.x + 500 + i * 140 + rnd() * 60), 70 + rnd() * 100, false);
   for (let i = 0; i < c.pods; i++) spawn("pod", wrap(ship.x + 700 + i * 260 + rnd() * 100), 60 + rnd() * 120, false);
@@ -761,9 +762,9 @@ pauseBtn.addEventListener("click", e => { e.stopPropagation(); if (mode === "pla
 window.__defender = {
   state: () => ({ frame, mode, score, lives, bombs, wave, credits, planetAlive, humans: humans.length, enemies: enemies.map(e => e.type), ship: ship && { x: ship.x, y: ship.y, vx: ship.vx, dir: ship.dir, sx: ship.sx, alive: ship.alive, carry: !!ship.carry }, beams: beams.length, paused }),
   placeEnemy: (type, dx, dy) => { const e = spawn(type, wrap(ship.x + dx), ship.y + dy, false); return enemies.length; },
-  dropHuman: () => { const h = humans[0]; if (!h) return false; h.x = wrap(ship.x + 8); h.y = ship.y - 4; h.state = "fall"; h.vy = 0; h.fallFrom = h.y; return true; },
+  dropHuman: () => { const h = humans[0]; if (!h) return false; h.x = wrap(ship.x + 8 + ship.vx * 8); h.y = ship.y - 2; h.state = "fall"; h.vy = 0; h.fallFrom = h.y; return true; },
   clearWave: () => { testHold = false; landerQueue = 0; enemies = enemies.filter(e => e.type !== "lander" && e.type !== "mutant"); },
-  calm: () => { enemies = []; shots = []; mines = []; testHold = true; },
+  calm: () => { for (const h of humans) { h.by = null; if (h.state === "carried") { h.state = "fall"; h.fallFrom = HUM_Y; } } enemies = []; shots = []; mines = []; testHold = true; },
   killHumans: () => { humans = []; checkPlanet(); },
   hold: (k, on) => { touch[k] = on; },
   debug: () => Object.assign(window.__defender.state(), { pos: enemies.map(e => [e.type, Math.round(e.x), Math.round(e.y)]), hum: humans.map(h => [h.state, Math.round(h.x), Math.round(h.y)]), table: table.map(r => r.join(":")) }),
