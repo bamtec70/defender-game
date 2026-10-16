@@ -129,9 +129,9 @@ const terr = new Int16Array(WORLD);
       const n = 20 + (rnd() * 60) | 0;
       for (let i = 0; i < n && x < WORLD; i++, x++) terr[x] = y + ((x >> 1) & 1 ? 0 : 1) + ((x * 7) % 11 === 0 ? 1 : 0);
     } else { // mountain: up then down, 45 degrees
-      const hgt = 6 + (rnd() * (r > 0.75 ? 26 : 14)) | 0;
-      for (let i = 0; i < hgt && x < WORLD; i++, x++) terr[x] = y - i;
-      for (let i = hgt; i > 0 && x < WORLD; i--, x++) terr[x] = y - i;
+      const hgt = 6 + (rnd() * (r > 0.75 ? 36 : 16)) | 0, up = rnd() < 0.3 ? 2 : 1, dn = rnd() < 0.3 ? 2 : 1;
+      for (let i = 0; i < hgt * up && x < WORLD; i++, x++) terr[x] = y - Math.floor(i / up);
+      for (let i = hgt * dn; i > 0 && x < WORLD; i--, x++) terr[x] = y - Math.ceil(i / dn);
     }
   }
   // smooth the seam at the wrap
@@ -333,7 +333,8 @@ function shipDie() {
   if (!ship.alive) return;
   ship.alive = false; deadT = 240; thrustSound(false); SFX.death(); flashT = 4;
   const cx = ship.x + 8, cy = ship.y + 3;
-  for (let i = 0; i < 64; i++) { const a = Math.random() * 6.283, s = 0.5 + Math.random() * 2.2; parts.push({ x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s, t: 110, c: i % 4 ? "#ffffff" : "#ff30ff", w: 1 }); }
+  // measured: filled disc of ~110 white fragments, radius ~10 px at 0.3 s and ~42 px at 0.7 s (r = 0.074 t^1.7)
+  for (let i = 0; i < 110; i++) { const a = Math.random() * 6.283, f = Math.sqrt(Math.random()); parts.push({ x: cx, y: cy, ox: cx, oy: cy, ca: Math.cos(a) * f, sa: Math.sin(a) * f, age: 0, ring: true, vx: 0, vy: 0, t: 80, c: "#ffffff", w: 2 }); }
   if (ship.carry) { ship.carry.state = "fall"; ship.carry.fallFrom = ship.carry.y; ship.carry = null; }
 }
 
@@ -522,7 +523,7 @@ function checkPlanet() {
   }
 }
 function updateParts() {
-  for (const p of parts) { p.x = wrap(p.x + p.vx); p.y += p.vy; p.t--; }
+  for (const p of parts) { if (p.ring) { p.age++; const r = 0.074 * Math.pow(p.age, 1.7); p.x = wrap(p.ox + p.ca * r); p.y = p.oy + p.sa * r; } else { p.x = wrap(p.x + p.vx); p.y += p.vy; } p.t--; }
   parts = parts.filter(p => p.t > 0);
 }
 function updateBonus() {
@@ -563,7 +564,14 @@ function drawHUD() {
   // scanner contents: world centred on the ship
   const sxw = x => { let d = dxTo(ship.x, x); return cx + Math.round(d / 16); };
   const syw = y => 2 + Math.round((y - TOP) * 28 / (H - TOP));
-  if (planetAlive) { g.fillStyle = TERR; for (let i = SC_X0 + 2; i < SC_X1; i++) { const wx = wrap(Math.round(ship.x) + (i - cx) * 16); g.fillRect(i, 27 - Math.round((GROUND - terr[wx]) * 0.27), 1, 1); } }
+  if (planetAlive) {
+    g.fillStyle = TERR; let py = null;
+    for (let i = SC_X0 + 2; i < SC_X1; i++) {
+      const w0 = wrap((Math.round(ship.x) >> 4 << 4) + (i - cx) * 16); let mn = 0; for (let k = 0; k < 16; k += 2) mn += terr[(w0 + k) % WORLD] / 8;
+      const y = 27 - Math.round((GROUND + 1 - mn) * 0.27);
+      if (py === null) py = y; g.fillRect(i, Math.min(y, py), 1, Math.abs(y - py) + 1); py = y;
+    }
+  }
   for (const h of humans) { g.fillStyle = "#909090"; g.fillRect(sxw(h.x), h.state === "walk" ? 28 : syw(h.y), 2, 2); }
   const SC_COL = { lander: "#20ff20", landerTop: "#ffb000", mutant: "#ff30ff", baiter: "#20ff20", bomber: "#8020ff", pod: "#ff2020", swarmer: "#ff9000" };
   for (const e of enemies) { const x = sxw(e.x); if (x > SC_X0 + 1 && x < SC_X1 - 1) { const y = syw(e.y); g.fillStyle = SC_COL[e.type]; g.fillRect(x, y, 2, 2); if (e.type === "lander") { g.fillStyle = SC_COL.landerTop; g.fillRect(x, y, 2, 1); } } }
@@ -593,7 +601,7 @@ function drawBeams() {
   for (const b of beams) {
     g.fillStyle = cols[(b.t + b.seed) % cols.length];
     const lo = Math.max(0, Math.min(b.head, b.tail)), hi = Math.min(W, Math.max(b.head, b.tail));
-    const solid = 16 + b.t * 3;
+    const solid = 14 + b.t * 1.5;
     for (let x = Math.floor(lo); x < hi; x++) {
       if (Math.abs(b.head - x) > solid) { const h = ((x * 2654435761) >>> 0) % 7; if (h < 3) continue; }
       g.fillRect(x, b.y, 1, 1);
@@ -627,7 +635,7 @@ function drawPlay() {
       for (let i = 0; i < L; i++) { g.fillStyle = ["#ffffff", "#ffff20", "#ff9000", "#ff2020"][i] || "#ff2020"; g.fillRect(fx - ship.dir * i * 2, ship.y + 2 + ((frame + i) & 1), 2, 1); }
     }
   } else if (ship.hyperT > 0) { const k = ship.hyperT % 25; g.fillStyle = "#fff"; for (let i = 0; i < 8; i++) g.fillRect(ship.sx + 6 + Math.cos(i) * k, ship.y + 3 + Math.sin(i) * k * 0.6, 1, 1); }
-  for (const p of parts) { const x = rel(p.x); g.fillStyle = p.t < 12 && (p.t & 2) ? "#000" : p.c; g.fillRect(x | 0, p.y | 0, p.w, 1); }
+  for (const p of parts) { const x = rel(p.x); g.fillStyle = p.t < 12 && (p.t & 2) ? "#000" : p.c; g.fillRect(x | 0, p.y | 0, p.w, p.ring ? 2 : 1); }
   for (const p of pops) text(p.txt, rel(p.x), p.y, "#ffffff", 1, "center");
   if (!ship.alive && deadT < 40 && lives <= 1) text("GAME OVER", W / 2, 110, "#20ff20", 1, "center");
 }
