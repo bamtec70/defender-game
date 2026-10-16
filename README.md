@@ -24,3 +24,6 @@ Waves bring 15/20 Landers in batches of 5 plus Bombers and Pods (which burst int
 Debug: `?wave=N` starts directly at wave N (`&planet=0` starts with the planet destroyed); with it, the backquote key skips a wave.
 
 Fan recreation for personal / educational use. Not affiliated with Williams or its successors.
+
+## Second pass (tuned against a longer MAME reference)
+Ship: thrust 300 px/s² from rest, top speed 5 px/frame, coasting slows over about 1.7 s. Reverse slides the ship at a constant 4 px/frame between x≈47 and x≈214, and at speed it creeps up to 40 px further forward. Landers drift at 0.67 px/frame and descend at 0.43 px/frame. Respawn comes about 4 s after a death. The laser is a 1 px line in one colour per frame: the head moves 8 px/frame, the tail 6 px/frame, and it breaks up behind a solid front. Scanner: brackets at x 140–155, a white + for the ship, grey humanoids, green Landers with a yellow top. Sounds were re-tuned from band-energy and peak analysis of the reference audio.
