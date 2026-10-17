@@ -611,7 +611,7 @@ function drawHUD() {
   text(String(score), 66, 22, SCORE_COLS[((frame / 240) | 0) % SCORE_COLS.length], 1, "right");
 }
 function drawStars() {
-  const off = camX() * 0.5;
+  const off = ship ? camX() * 0.5 : 0;
   for (const s of stars) {
     const x = ((s.x - off) % 1024 + 1024) % 1024; if (x >= W) continue;
     if (((frame + s.t) >> 4) % 7 === 0) continue;
@@ -620,7 +620,7 @@ function drawStars() {
 }
 function drawTerrain() {
   if (!planetAlive) return;
-  g.fillStyle = TERR; const c = camX() | 0;
+  g.fillStyle = TERR; const c = ship ? camX() | 0 : 0;
   for (let i = 0; i < W; i++) { const y = terr[(c + i) % WORLD]; g.fillRect(i, y, 1, 1); }
 }
 function drawBeams() {
