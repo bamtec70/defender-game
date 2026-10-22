@@ -31,3 +31,19 @@ body.touch #game,body.touch #topbar{width:min(100vw - 12px,(100dvh - 50px)*292/2
   body.touch #game,body.touch #topbar{width:calc(100vw - 8px)}
 }
 @keyframes blink{50%{opacity:.3}}
+/* build 50: arrow pad bottom-left, round FIRE bottom-right */
+#dpad{display:grid;grid-template-areas:". u ." "l . r" ". d .";grid-template-columns:repeat(3,76px);grid-template-rows:repeat(3,76px);touch-action:none;-webkit-user-select:none;user-select:none}
+.tbtn.arr{display:flex;align-items:center;justify-content:center;font-size:30px;pointer-events:none}
+.tbtn.fire{width:108px;height:108px;border-radius:50%;font-size:20px}
+.tbtn.sm{width:64px;height:48px}
+#pad-right{align-items:flex-end}
+body.touch #pad-right .row:first-child{margin-bottom:4px}
+@media (orientation:portrait){
+  body.touch{justify-content:flex-start}
+  body.touch #rotate-hint{display:none}
+  body.touch .pad{bottom:max(14px,env(safe-area-inset-bottom))}
+}
+@media (orientation:landscape){
+  body.touch #game,body.touch #topbar{width:min(100vw - 2*max(240px,env(safe-area-inset-left)) - 8px,(100dvh - 44px)*292/240)}
+  body.touch #dpad{grid-template-columns:repeat(3,72px);grid-template-rows:repeat(3,72px)}
+}

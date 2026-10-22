@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#000000">
 <title>DEFENDER</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="style.css?v=45">
+<link rel="stylesheet" href="style.css?v=50">
 </head>
 <body>
 <div id="topbar">
@@ -22,22 +22,22 @@
   <div id="canvas-wrap"><canvas id="game" width="292" height="240" aria-label="Defender game"></canvas></div>
 </div>
 <div id="pad-left" class="pad">
-  <button type="button" class="tbtn rock" data-k="up" aria-label="Up">&#9650;</button>
-  <button type="button" class="tbtn rock" data-k="down" aria-label="Down">&#9660;</button>
+  <div id="dpad" aria-label="Arrow pad">
+    <span class="tbtn arr" data-k="up" style="grid-area:u">&#9650;</span>
+    <span class="tbtn arr" data-k="left" style="grid-area:l">&#9664;</span>
+    <span class="tbtn arr" data-k="right" style="grid-area:r">&#9654;</span>
+    <span class="tbtn arr" data-k="down" style="grid-area:d">&#9660;</span>
+  </div>
 </div>
 <div id="pad-right" class="pad">
   <div class="row">
     <button type="button" class="tbtn sm" data-k="bomb">BOMB</button>
     <button type="button" class="tbtn sm" data-k="hyper">HYPER</button>
   </div>
-  <div class="row">
-    <button type="button" class="tbtn md" data-k="reverse">REVERSE</button>
-    <button type="button" class="tbtn md" data-k="thrust">THRUST</button>
-  </div>
   <div class="row"><button type="button" class="tbtn fire" data-k="fire">FIRE</button></div>
 </div>
-<div id="help">&uarr;&darr; / W S - UP/DOWN &middot; &rarr; / D - THRUST &middot; &larr; / A / SHIFT - REVERSE &middot; SPACE / CTRL - FIRE &middot; B / Z - SMART BOMB &middot; H / X - HYPERSPACE &middot; 5 - COIN &middot; ENTER / 1 - START &middot; P - PAUSE &middot; M - SOUND</div>
+<div id="help">&larr;&rarr; / A D - FACE &amp; THRUST &middot; &uarr;&darr; / W S - UP/DOWN &middot; SPACE / CTRL - FIRE &middot; B / Z - SMART BOMB &middot; H / X - HYPERSPACE &middot; 5 - COIN &middot; ENTER / 1 - START &middot; P - PAUSE &middot; M - SOUND &middot; BUILD 50</div>
 <div id="rotate-hint">ROTATE FOR BEST PLAY &#8635;</div>
-<script src="game.js?v=49"></script>
+<script src="game.js?v=50"></script>
 </body>
 </html>

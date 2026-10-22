@@ -332,11 +332,17 @@ function killEnemy(e, bySmart) {
 function input() {
   return {
     up: keys.ArrowUp || keys.KeyW || touch.up, down: keys.ArrowDown || keys.KeyS || touch.down,
-    thrust: keys.ArrowRight || keys.KeyD || touch.thrust,
+    // Left/Right = face that way AND thrust while held; the most recently pressed one wins
+    thrust: horizDir() !== 0, dir: horizDir(),
     fire: keys.Space || keys.ControlLeft || keys.ControlRight || touch.fire,
   };
 }
 let fireLatch = false, firePending = false, testHold = false;
+function horizDir() {
+  const L = keys.ArrowLeft || keys.KeyA || touch.left, R = keys.ArrowRight || keys.KeyD || touch.right;
+  if (L && R) return lastHoriz; return L ? -1 : R ? 1 : 0;
+}
+let lastHoriz = 1;
 function doReverse() { if (mode === "play" && ship && ship.alive && !ship.hyperT) ship.dir = -ship.dir; }
 function doBomb() {
   if (mode !== "play" || !ship.alive || bombs <= 0) return;
@@ -383,6 +389,7 @@ function updatePlay() {
       if (ship.hyperT === 18) { ship.x = wrap(ship.x + 400 + Math.random() * 1200); ship.y = TOP + 10 + Math.random() * 150; ship.vx = 0; SFX.materialize(); }
       if (ship.hyperT === 0 && Math.random() < 0.25) shipDie();
     } else {
+      if (inp.dir) ship.dir = inp.dir;
       if (inp.up) ship.y -= 2; if (inp.down) ship.y += 2;
       ship.y = Math.max(TOP + 2, Math.min(HUM_Y - 7, ship.y));
       // measured (df_ref2): thrust ~300 px/s^2 from rest, terminal 5 px/frame (300 px/s), coast tau ~1.7 s
@@ -746,7 +753,8 @@ document.addEventListener("keydown", e => {
   if (e.code === "KeyP" && (mode === "play" || mode === "bonus")) { paused = !paused; if (paused) thrustSound(false); }
   if (e.code === "KeyM") toggleMute();
   if (paused) return;
-  if (["ArrowLeft", "KeyA", "ShiftLeft", "ShiftRight"].includes(e.code)) doReverse();
+  if (e.code === "ArrowLeft" || e.code === "KeyA") lastHoriz = -1;
+  if (e.code === "ArrowRight" || e.code === "KeyD") lastHoriz = 1;
   if (e.code === "KeyB" || e.code === "KeyZ") doBomb();
   if (e.code === "KeyH" || e.code === "KeyX") doHyper();
   if (e.code === "Backquote" && DEBUG_WAVE && mode === "play") { enemies = []; landerQueue = 0; }
@@ -756,16 +764,35 @@ window.addEventListener("blur", () => { for (const k in keys) keys[k] = false; f
 
 // touch: every button is held independently (multi-touch); tap the screen to coin/start
 let touchMode = false;
-const touch = { up: false, down: false, thrust: false, fire: false };
+const touch = { up: false, down: false, left: false, right: false, fire: false };
 const held = new Map();
 function setTouch(k, on, btn) {
   btn.classList.toggle("active", on);
   if (k in touch) touch[k] = on;
+  if (on && k === "left") lastHoriz = -1; if (on && k === "right") lastHoriz = 1;
   if (on && k === "fire") firePending = true;
   if (on) { audio(); if (k === "reverse") doReverse(); if (k === "bomb") doBomb(); if (k === "hyper") doHyper(); if (k === "fire" && mode !== "play" && mode !== "bonus" && mode !== "entry") startPress(); }
 }
-document.querySelectorAll(".tbtn").forEach(b => {
-  b.addEventListener("pointerdown", e => { e.preventDefault(); b.setPointerCapture && b.setPointerCapture(e.pointerId); held.set(e.pointerId, b); setTouch(b.dataset.k, true, b); });
+// arrow pad: each finger maps to 1-2 directions by position (slide between arrows, or press a corner / two arrows for a diagonal)
+const dpad = document.getElementById("dpad"), padPtrs = new Map();
+function padDirs(e) {
+  const r = dpad.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2), dead = r.width * 0.12, out = [];
+  if (Math.abs(dx) > dead && Math.abs(dx) > Math.abs(dy) * 0.4) out.push(dx < 0 ? "left" : "right");
+  if (Math.abs(dy) > dead && Math.abs(dy) > Math.abs(dx) * 0.4) out.push(dy < 0 ? "up" : "down");
+  return out;
+}
+function refreshPad() {
+  const on = new Set(); for (const v of padPtrs.values()) v.forEach(d => on.add(d));
+  for (const k of ["left", "right", "up", "down"]) { const b = dpad.querySelector(`[data-k="${k}"]`); if (on.has(k) !== touch[k]) setTouch(k, on.has(k), b); }
+}
+if (dpad) {
+  dpad.addEventListener("pointerdown", e => { e.preventDefault(); audio(); try { dpad.setPointerCapture(e.pointerId); } catch (_) {} padPtrs.set(e.pointerId, padDirs(e)); refreshPad(); });
+  dpad.addEventListener("pointermove", e => { if (padPtrs.has(e.pointerId)) { padPtrs.set(e.pointerId, padDirs(e)); refreshPad(); } });
+  const pu = e => { if (padPtrs.delete(e.pointerId)) refreshPad(); };
+  dpad.addEventListener("pointerup", pu); dpad.addEventListener("pointercancel", pu); dpad.addEventListener("lostpointercapture", pu);
+}
+document.querySelectorAll("#pad-right .tbtn").forEach(b => {
+  b.addEventListener("pointerdown", e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (_) {} held.set(e.pointerId, b); setTouch(b.dataset.k, true, b); });
   const up = e => { if (held.get(e.pointerId) === b) { held.delete(e.pointerId); if (![...held.values()].includes(b)) setTouch(b.dataset.k, false, b); } };
   b.addEventListener("pointerup", up); b.addEventListener("pointercancel", up); b.addEventListener("lostpointercapture", up);
 });
@@ -797,7 +824,7 @@ window.__defender = {
   clearWave: () => { testHold = false; landerQueue = 0; enemies = enemies.filter(e => e.type !== "lander" && e.type !== "mutant"); },
   calm: () => { for (const h of humans) { h.by = null; if (h.state === "carried") { h.state = "fall"; h.fallFrom = HUM_Y; } } enemies = []; shots = []; mines = []; testHold = true; },
   killHumans: () => { humans = []; checkPlanet(); },
-  hold: (k, on) => { touch[k] = on; },
+  hold: (k, on) => { touch[k] = on; if (on && k === "left") lastHoriz = -1; if (on && k === "right") lastHoriz = 1; },
   debug: () => Object.assign(window.__defender.state(), { pos: enemies.map(e => [e.type, Math.round(e.x), Math.round(e.y)]), hum: humans.map(h => [h.state, Math.round(h.x), Math.round(h.y)]), table: table.map(r => r.join(":")) }),
   setScore: n => { score = n; },
   setLives: n => { lives = n; },
