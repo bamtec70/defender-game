@@ -55,62 +55,74 @@ function sprite(rows, map) {
   return { r: c, l: f, w, h, rows };
 }
 const SPR = {
+  /* build 51 redraw: 1981 Williams proportions (ship 16x6: white hull, magenta stripe, purple fin, blue canopy) */
   ship: sprite([
-    "...BB............",
-    "..wBBB...........",
-    "wwwwwwww.........",
-    "wMwwMMwwwwwwww...",
-    "wwwwMMMMwwwwwwwWW",
-    "pp..MMMww........",
+    "..BB............",
+    ".wBBw...........",
+    "wwwwwwwwww......",
+    "pMMwwMMMwwwwwww.",
+    "wwwwwwwwwwwwwwwW",
+    "pp.MMMwww.......",
   ]),
+  /* lander: green saucer with yellow port lights, three green legs */
   lander: sprite([
-    "..YGGGY..",
-    ".GG.G.GG.",
+    "...GGG...",
+    ".GGYGYGG.",
+    "GGYGGGYGG",
     ".GGGGGGG.",
     "..G.G.G..",
     ".G..G..G.",
     "G...G...G",
   ]),
+  /* mutant: lander frame in magenta/green checker */
   mutant: sprite([
-    "..MGGGM..",
-    ".MG.M.GM.",
-    ".GMGMGMG.",
+    "...MGM...",
+    ".MGMGMGM.",
+    "GMGMGMGMG",
+    ".MGMGMGM.",
     "..M.G.M..",
     ".M..G..M.",
     "M...M...M",
   ]),
+  /* baiter: long flat green saucer */
   baiter: sprite([
-    "...GGGGG...",
-    ".GG.G.G.GG.",
-    "GGGGGGGGGGG",
-    "..ggggggg..",
+    "....GGGGG....",
+    "..GGgGgGgGG..",
+    "GGGGGGGGGGGGG",
+    "..ggggggggg..",
   ]),
+  /* bomber: purple box with blue slats */
   bomber: sprite([
     "ppppp",
-    "pBpBp",
+    "pBBBp",
     "ppppp",
-    "pBpBp",
+    "pBBBp",
     "ppppp",
   ]),
+  /* pod: purple core with red spokes */
   pod: sprite([
-    "R..p..R",
+    "R..R..R",
     ".R.p.R.",
-    "..RpR..",
-    "ppp.ppp",
-    "..RpR..",
+    "..ppp..",
+    "RpppppR",
+    "..ppp..",
     ".R.p.R.",
-    "R..p..R",
+    "R..R..R",
   ]),
+  /* swarmer: small red dart with yellow eye */
   swarmer: sprite([
     ".RR..",
-    "RRRRY",
+    "RRRYR",
     ".RR..",
   ]),
+  /* humanoid: green head, magenta body, purple legs (3x8) */
   human: sprite([
     ".G.",
     "MMM",
+    "MMM",
     ".M.",
     ".p.",
+    "p.p",
     "p.p",
     "p.p",
   ]),
@@ -120,7 +132,7 @@ const SPR = {
     "wwwwwwWW",
   ]),
 };
-SPR.human.h = 6;
+SPR.human.h = 8;
 
 /* ---------------- terrain & stars ---------------- */
 let seedN = 1981;
@@ -147,10 +159,15 @@ const stars = [];
 for (let i = 0; i < 46; i++) stars.push({ x: rnd() * 1024, y: TOP + 4 + rnd() * 150, c: STAR_COLS[(rnd() * 8) | 0], t: rnd() * 100 });
 
 /* ---------------- audio (Web Audio synthesis of the Williams sound board) ---------------- */
-let AC = null, master = null, muted = localStorage.getItem("defender_mute") === "1";
+/* build 51: sound is ON by default. Older builds stored "defender_mute"; that key is dropped so a stale value can
+   never start the game silent. Mute is only on when the player turns it on this build (key defender_mute_v51). */
+try { localStorage.removeItem("defender_mute"); } catch (_) {}
+let AC = null, master = null, muted = false;
+try { muted = localStorage.getItem("defender_mute_v51") === "1"; } catch (_) {}
 function audio() {
   if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); master = AC.createGain(); master.gain.value = muted ? 0 : 0.32; master.connect(AC.destination); } catch (e) { AC = null; } }
-  if (AC && AC.state === "suspended") AC.resume();
+  if (AC && AC.state !== "running" && AC.resume) AC.resume().catch(() => {});
+  if (AC && master) master.gain.value = muted ? 0 : 0.32;
   return AC;
 }
 let noiseBuf = null;
@@ -196,6 +213,36 @@ function thrustSound(on) {
     try { gn.gain.cancelScheduledValues(AC.currentTime); gn.gain.setValueAtTime(gn.gain.value, AC.currentTime); gn.gain.linearRampToValueAtTime(0.0001, AC.currentTime + 0.12); n.stop(AC.currentTime + 0.15); } catch (e) {}
   }
 }
+  // -- Audio unlock (sound ON by default): first tap/click/key anywhere resumes Web Audio --
+  (function () {
+    function silentWav() {
+      const n = 800, b = new Uint8Array(44 + n), v = new DataView(b.buffer);
+      const s = (o, t) => { for (let i = 0; i < t.length; i++) b[o + i] = t.charCodeAt(i); };
+      s(0, "RIFF"); v.setUint32(4, 36 + n, true); s(8, "WAVEfmt "); v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true);
+      v.setUint16(32, 1, true); v.setUint16(34, 8, true); s(36, "data"); v.setUint32(40, n, true); b.fill(128, 44);
+      let str = ""; for (let i = 0; i < b.length; i++) str += String.fromCharCode(b[i]);
+      return "data:audio/wav;base64," + btoa(str);
+    }
+    let tag = null, kicked = null;
+    function onGesture() {
+      try { if (navigator.audioSession && navigator.audioSession.type !== "playback") navigator.audioSession.type = "playback"; } catch (_) {}
+      try { if (!tag) { tag = new Audio(silentWav()); tag.setAttribute("playsinline", ""); tag.loop = true; tag.volume = 0.01; } if (tag.paused) { const p = tag.play(); if (p && p.catch) p.catch(function () {}); } } catch (_) {}
+      try { audio(); } catch (_) {}
+      try {
+        const c = AC;
+        if (c) {
+          if (c.state !== "running" && c.resume) c.resume().catch(function () {});
+          if (kicked !== c) { kicked = c; const sb = c.createBuffer(1, 1, 22050), src = c.createBufferSource(); src.buffer = sb; src.connect(c.destination); src.start(0); }
+        }
+      } catch (_) {}
+    }
+    ["pointerdown", "touchstart", "touchend", "mousedown", "click", "keydown"].forEach(function (t) {
+      window.addEventListener(t, onGesture, { capture: true, passive: true });
+    });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) { try { const c = AC; if (c && c.state === "suspended") c.resume().catch(function () {}); } catch (_) {} } });
+    window.__audioInfo = function () { const c = AC; return { ctx: c ? c.state : "none", muted: muted }; };
+  })();
 // Tuned against df_ref2.mp3 (band energies / peak tracking, see README)
 const SFX = {
   // laser: bright click (~1.5 kHz noise) then a stepped tone falling ~780 -> 560 Hz over ~0.16 s
@@ -221,7 +268,12 @@ const SFX = {
   // smart bomb (isolated, df_ref4 141/441/621 s): ~0.15 s full-level crack, then ~2.2-2.4 s low rumble peaking 20-100 Hz
   bomb() { nburst(0.15, 0.9, 900, 0.5); nburst(2.3, 0.45, 160, 0.7, 0.12, 0, "lowpass"); },
   // hyperspace (137.3 s): silent while the playfield is blank; the re-entry plays the materialize sound
-  hyper() { },
+  // hyperspace: short descending "zip" as the ship vanishes (re-entry plays materialize)
+  hyper() { tone("square", 2400, 180, 0.28, 0.08, 0, "exp"); nburst(0.25, 0.35, 2600, 0.8, 0, 400); },
+  // humanoid lost: falling wail that thuds into the ground
+  humanLost() { tone("triangle", 1800, 160, 0.7, 0.16); tone("square", 1700, 150, 0.7, 0.04); nburst(0.3, 0.5, 400, 0.7, 0.65, 0, "lowpass"); },
+  // humanoid saved (set down safely): bright rising arpeggio
+  saved() { [880, 1175, 1480, 1760, 2350].forEach((f, i) => tone("square", f, f, 0.06, 0.1, i * 0.055)); },
   // player death: low rumble (>80% energy under 500 Hz) decaying over ~1.8 s, then silence
   death() { nburst(1.8, 0.9, 900, 0.6, 0, 140, "lowpass"); nburst(0.25, 0.4, 2400, 0.7); tone("sawtooth", 220, 40, 1.6, 0.12); },
   // start: ~2 s noisy, warbling harmonic sweep (peaks wander 250 -> 820 -> 1640 -> 2700 Hz)
@@ -407,7 +459,7 @@ function updatePlay() {
       ship.sx += Math.sign(d) * Math.min(Math.abs(d), ship.slide ? 4 : 0.4);
       if ((inp.fire && !fireLatch) || firePending) fireLaser();
       fireLatch = !!inp.fire; firePending = false;
-      if (ship.carry) { const h = ship.carry; h.x = wrap(ship.x + 7); h.y = ship.y + 7; if (h.y >= HUM_Y - 6) { h.y = HUM_Y - (rnd() * 3 | 0); h.state = "walk"; ship.carry = null; addScore(500); pop(h.x, h.y - 10, "500"); SFX.landH(); } }
+      if (ship.carry) { const h = ship.carry; h.x = wrap(ship.x + 7); h.y = ship.y + 7; if (h.y >= HUM_Y - 6) { h.y = HUM_Y - (rnd() * 3 | 0); h.state = "walk"; ship.carry = null; addScore(500); pop(h.x, h.y - 10, "500"); SFX.saved(); } }
     }
   } else {
     deadT--; ship.vx *= 0.9;
@@ -452,7 +504,7 @@ function updateEnemies(c) {
         if (e.carry) {
           e.y -= 0.5; /* measured df_ref3 carry climb 0.43-0.56 px/frame */ e.carry.x = wrap(e.x + 3); e.carry.y = e.y + 7;
           if (e.y <= TOP + 2) { // humanoid becomes part of a mutant
-            const h = e.carry; humans.splice(humans.indexOf(h), 1); e.carry = null; e.type = "mutant"; SFX.mutant();
+            const h = e.carry; humans.splice(humans.indexOf(h), 1); e.carry = null; e.type = "mutant"; SFX.mutant(); SFX.humanLost();
             checkPlanet();
           }
         } else if (e.target) {
@@ -543,7 +595,7 @@ function updateHumans() {
         h.state = "caught"; ship.carry = h; addScore(500); pop(h.x, h.y - 8, "500"); SFX.catchH(); continue;
       }
       if (h.y >= HUM_Y - 5) {
-        if (HUM_Y - h.fallFrom > 110) { humans.splice(humans.indexOf(h), 1); burst(h.x, h.y, SPR.human, 8, 1); SFX.scream(); checkPlanet(); }
+        if (HUM_Y - h.fallFrom > 110) { humans.splice(humans.indexOf(h), 1); burst(h.x, h.y, SPR.human, 8, 1); SFX.humanLost(); checkPlanet(); }
         else { h.y = HUM_Y - 5; h.state = "walk"; addScore(250); pop(h.x, h.y - 10, "250"); SFX.landH(); }
       }
     }
@@ -648,7 +700,7 @@ function drawPlay() {
   if (ship.alive && ship.hyperT > 18) return; /* hyperspace: whole playfield blank (measured) */
   drawStars(); drawTerrain();
   // humanoids
-  for (const h of humans) { const x = rel(h.x); if (x > -4 && x < W + 2) drawSpr(SPR.human, x, h.y - 5); }
+  for (const h of humans) { const x = rel(h.x); if (x > -4 && x < W + 2) drawSpr(SPR.human, x, h.y - 7); }
   // mines & shots
   for (const m of mines) { const x = rel(m.x); if (x > -3 && x < W) { g.fillStyle = (frame >> 2) & 1 ? "#ffffff" : "#ff30ff"; g.fillRect(x | 0, m.y | 0, 2, 2); } }
   for (const s of shots) { const x = rel(s.x); g.fillStyle = (frame >> 1) & 1 ? "#ffffff" : "#ffff20"; g.fillRect(x | 0, s.y | 0, 2, 2); }
@@ -808,7 +860,7 @@ document.addEventListener("contextmenu", e => e.preventDefault());
 
 const muteBtn = document.getElementById("btn-mute"), pauseBtn = document.getElementById("btn-pause");
 function toggleMute() {
-  muted = !muted; localStorage.setItem("defender_mute", muted ? "1" : "0");
+  muted = !muted; try { localStorage.setItem("defender_mute_v51", muted ? "1" : "0"); } catch (_) {}
   if (master) master.gain.value = muted ? 0 : 0.32; if (muted) thrustSound(false);
   muteBtn.textContent = muted ? "SOUND OFF" : "SOUND ON";
 }
@@ -818,6 +870,11 @@ pauseBtn.addEventListener("click", e => { e.stopPropagation(); if (mode === "pla
 
 // test/debug hook (read-only snapshot + helpers used by the automated test)
 window.__defender = {
+  build: 51,
+  audio: () => ({ ctx: AC ? AC.state : "none", muted }),
+  bomb: () => doBomb(),
+  mutantNear: () => { const e = spawn("mutant", wrap(ship.x + 120), ship.y, false); return true; },
+  podNear: () => { spawn("pod", wrap(ship.x + 140), ship.y, false); return true; },
   state: () => ({ frame, mode, score, lives, bombs, wave, credits, planetAlive, humans: humans.length, enemies: enemies.map(e => e.type), ship: ship && { x: ship.x, y: ship.y, vx: ship.vx, dir: ship.dir, sx: ship.sx, alive: ship.alive, carry: !!ship.carry }, beams: beams.length, paused }),
   placeEnemy: (type, dx, dy) => { const e = spawn(type, wrap(ship.x + dx), ship.y + dy, false); return enemies.length; },
   dropHuman: () => { const h = humans[0]; if (!h) return false; h.x = wrap(ship.x + 8 + ship.vx * 8); h.y = ship.y - 2; h.state = "fall"; h.vy = 0; h.fallFrom = h.y; return true; },
