@@ -426,7 +426,7 @@ function update() {
   if (mode === "play") updatePlay();
   else if (mode === "bonus") updateBonus();
   else if (mode === "planet") { planetBoomT--; if (planetFlash > 0) planetFlash--; updateParts(); if (planetBoomT <= 0) mode = "play"; }
-  else if (mode === "over") { if (modeT > 180) { const q = qualifies(); if (q >= 0) { mode = "entry"; entry = { pos: q, letters: [0, 0, 0], i: 0, t: 0 }; } else { mode = "attract"; modeT = 0; } } }
+  else if (mode === "over") { if (modeT > 180) { const q = qualifies(); if (q >= 0) { mode = "entry"; entry = { pos: q, letters: [0, 0, 0], i: 0, t: 0 }; firePending = false; fireLatch = true; /* build 52: a fire press/hold from play must not skip initial 1 */ } else { mode = "attract"; modeT = 0; } } }
   else if (mode === "entry") updateEntry();
   for (const p of pops) p.t--; pops = pops.filter(p => p.t > 0);
 }
@@ -627,12 +627,15 @@ function updateEntry() {
   entry.t++;
   const inp = input();
   if (entry.t % 8 === 0) { if (inp.up) entry.letters[entry.i] = (entry.letters[entry.i] + 1) % ABC.length; if (inp.down) entry.letters[entry.i] = (entry.letters[entry.i] + ABC.length - 1) % ABC.length; }
-  if ((inp.fire && !fireLatch) || firePending) { firePending = false; entry.i++; SFX.tally(); if (entry.i >= 3) finishEntry(); }
+  if (entry.t < 30) { firePending = false; fireLatch = fireLatch && !!inp.fire; return; } /* arm delay ~0.5 s */
+  if ((inp.fire && !fireLatch) || firePending) { firePending = false; entryNext(); }
   fireLatch = !!inp.fire;
 }
+function entryNext() { if (!entry || entry.t < 30) return; entry.i++; SFX.tally(); if (entry.i >= 3) finishEntry(); }
+function entryType(ch) { if (!entry || entry.t < 30) return; const k = ABC.indexOf(ch); if (k >= 0) { entry.letters[entry.i] = k; entryNext(); } }
 function finishEntry() {
   table.splice(entry.pos, 0, [entry.letters.map(i => ABC[i]).join(""), score]); table.length = 8;
-  localStorage.setItem("defender_table_v1", JSON.stringify(table)); entry = null; mode = "attract"; modeT = 600;
+  localStorage.setItem("defender_table_v1", JSON.stringify(table)); entry = null; if (table[0][1] > high) { high = table[0][1]; localStorage.setItem("defender_hi_v3", String(high)); } mode = "attract"; modeT = 600;
 }
 
 /* ---------------- drawing ---------------- */
@@ -768,7 +771,7 @@ function drawEntry() {
   text("PLAYER ONE", W / 2, 50, "#ffff20", 1, "center");
   text("YOU HAVE QUALIFIED FOR", W / 2, 70, "#ffff20", 1, "center");
   text("THE DEFENDER HALL OF FAME", W / 2, 82, "#ffff20", 1, "center");
-  text("SELECT INITIALS WITH UP/DOWN", W / 2, 104, "#ff30ff", 1, "center");
+  text(touchMode ? "SELECT INITIALS WITH UP/DOWN" : "TYPE OR UP/DOWN TO SELECT", W / 2, 104, "#ff30ff", 1, "center");
   text("PRESS FIRE TO ENTER INITIAL", W / 2, 116, "#ff30ff", 1, "center");
   for (let i = 0; i < 3; i++) { text(ABC[entry.letters[i]], W / 2 - 18 + i * 14, 140, i === entry.i && (frame & 16) ? "#ffffff" : "#ff2020", 2); g.fillStyle = "#ff2020"; g.fillRect(W / 2 - 18 + i * 14, 156, 10, 1); }
   text(String(score), W / 2, 170, "#20ffff", 1, "center");
@@ -798,6 +801,12 @@ document.addEventListener("keydown", e => {
   audio();
   if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
+  if (mode === "entry") {
+    e.preventDefault();
+    if (/^Key[A-Z]$/.test(e.code) && e.code !== "KeyW" && e.code !== "KeyS") { entryType(e.code.slice(3)); return; }
+    if (e.code === "Enter" || e.code === "Digit1") { entryNext(); return; }
+    /* arrows / W S still scroll letters (handled while held in updateEntry) */
+  }
   keys[e.code] = true;
   if (e.code === "Space" || e.code === "ControlLeft" || e.code === "ControlRight") firePending = true;
   if (e.code === "Digit5") coin();
@@ -822,7 +831,7 @@ function setTouch(k, on, btn) {
   btn.classList.toggle("active", on);
   if (k in touch) touch[k] = on;
   if (on && k === "left") lastHoriz = -1; if (on && k === "right") lastHoriz = 1;
-  if (on && k === "fire") firePending = true;
+  if (on && k === "fire") firePending = mode !== "entry" || (entry && entry.t >= 30);
   if (on) { audio(); if (k === "reverse") doReverse(); if (k === "bomb") doBomb(); if (k === "hyper") doHyper(); if (k === "fire" && mode !== "play" && mode !== "bonus" && mode !== "entry") startPress(); }
 }
 // arrow pad: each finger maps to 1-2 directions by position (slide between arrows, or press a corner / two arrows for a diagonal)
@@ -851,7 +860,7 @@ document.querySelectorAll("#pad-right .tbtn").forEach(b => {
 cv.addEventListener("pointerdown", e => {
   audio();
   if (e.pointerType === "touch" && !touchMode) { touchMode = true; document.body.classList.add("touch"); }
-  if (mode === "attract") startPress(); else if (mode === "entry") { entry.i++; if (entry.i >= 3) finishEntry(); }
+  if (mode === "attract") startPress(); else if (mode === "entry") entryNext();
 });
 if ("ontouchstart" in window || navigator.maxTouchPoints > 0) { touchMode = true; document.body.classList.add("touch"); }
 ["touchmove", "gesturestart", "gesturechange", "dblclick"].forEach(t => document.addEventListener(t, e => { if (!e.target.closest || !e.target.closest("#topbar")) e.preventDefault(); }, { passive: false }));
@@ -870,12 +879,12 @@ pauseBtn.addEventListener("click", e => { e.stopPropagation(); if (mode === "pla
 
 // test/debug hook (read-only snapshot + helpers used by the automated test)
 window.__defender = {
-  build: 51,
+  build: 52,
   audio: () => ({ ctx: AC ? AC.state : "none", muted }),
   bomb: () => doBomb(),
   mutantNear: () => { const e = spawn("mutant", wrap(ship.x + 120), ship.y, false); return true; },
   podNear: () => { spawn("pod", wrap(ship.x + 140), ship.y, false); return true; },
-  state: () => ({ frame, mode, score, lives, bombs, wave, credits, planetAlive, humans: humans.length, enemies: enemies.map(e => e.type), ship: ship && { x: ship.x, y: ship.y, vx: ship.vx, dir: ship.dir, sx: ship.sx, alive: ship.alive, carry: !!ship.carry }, beams: beams.length, paused }),
+  state: () => ({ entry: entry && { i: entry.i, t: entry.t, letters: entry.letters.map(i => ABC[i]).join("") }, table: table.map(r => r.join(":")), frame, mode, score, lives, bombs, wave, credits, planetAlive, humans: humans.length, enemies: enemies.map(e => e.type), ship: ship && { x: ship.x, y: ship.y, vx: ship.vx, dir: ship.dir, sx: ship.sx, alive: ship.alive, carry: !!ship.carry }, beams: beams.length, paused }),
   placeEnemy: (type, dx, dy) => { const e = spawn(type, wrap(ship.x + dx), ship.y + dy, false); return enemies.length; },
   dropHuman: () => { const h = humans[0]; if (!h) return false; h.x = wrap(ship.x + 8 + ship.vx * 8); h.y = ship.y - 2; h.state = "fall"; h.vy = 0; h.fallFrom = h.y; return true; },
   clearWave: () => { testHold = false; landerQueue = 0; enemies = enemies.filter(e => e.type !== "lander" && e.type !== "mutant"); },
