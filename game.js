@@ -334,6 +334,7 @@ function resetHumans() {
 }
 
 function startGame() {
+  if (window.WTPShare) WTPShare.hide();
   score = 0; lives = 3; bombs = 3; nextExtra = 10000; wave = DEBUG_WAVE || 1;
   ship = newShip(); planetAlive = true; resetHumans();
   if (qs.get("planet") === "0") { planetAlive = false; humans = []; }
@@ -465,7 +466,7 @@ function updatePlay() {
     deadT--; ship.vx *= 0.9;
     if (deadT === 0) {
       lives--;
-      if (lives <= 0) { mode = "over"; modeT = 0; thrustSound(false); return; }
+      if (lives <= 0) { mode = "over"; modeT = 0; thrustSound(false); if (window.WTPShare) WTPShare.show(score); return; }
       ship.alive = true; ship.vx = 0; ship.y = 120; shots = []; mines = []; beams = [];
       for (const e of enemies) if (onScreen(e.x, 40)) e.x = wrap(e.x + 600);
     }
